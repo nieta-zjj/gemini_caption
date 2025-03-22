@@ -174,18 +174,20 @@ class GeminiBatchCaption:
             return None, "", ""
 
     async def get_url_by_id(self, dan_id):
-        """异步从Danbooru获取图片URL"""
-        request_url = f"https://danbooru.donmai.us/posts/{dan_id}.json"
-
+        """异步从MongoDB获取图片URL"""
         try:
-            # 使用httpx替代aiohttp
-            response = await self.http_client.get(request_url)
+            # 从MongoDB的danbooru数据库的pics表获取数据
+            danbooru_db = self.mongo_client["danbooru"]
+            pics_collection = danbooru_db["pics"]
 
-            if response.status_code == 404:
+            # 查询对应ID的记录
+            pic_data = await pics_collection.find_one({"_id": int(dan_id)})
+
+            if pic_data is None:
                 error_result = {
                     "_id": dan_id,
                     "success": False,
-                    "error": "Post not found",
+                    "error": "Post not found in database",
                     "status_code": 404,
                     "created_at": time.time()
                 }
@@ -196,22 +198,14 @@ class GeminiBatchCaption:
                     {"$set": error_result},
                     upsert=True
                 )
-                raise ValueError(f"Danbooru post {dan_id} not found (404)")
+                raise ValueError(f"Danbooru post {dan_id} not found in database (404)")
 
-            if response.status_code != 200:
-                raise Exception(f"获取Danbooru信息失败，状态码: {response.status_code}")
+            # 从数据中构建URL
+            # 使用md5和file_ext构建URL
+            md5 = pic_data.get("md5")
+            file_ext = pic_data.get("file_ext")
 
-            data = response.json()
-            url = None
-
-            try:
-                url = data.get("large_file_url")
-                if not url:
-                    url = data.get("file_url")
-            except Exception:
-                pass
-
-            if not url:
+            if not md5 or not file_ext:
                 error_result = {
                     "_id": dan_id,
                     "success": False,
@@ -219,18 +213,17 @@ class GeminiBatchCaption:
                     "status_code": 404,
                     "created_at": time.time()
                 }
-                # 保存404错误到MongoDB
+                # 保存错误到MongoDB
                 collection = self.get_collection_for_id(dan_id)
                 await collection.update_one(
                     {"_id": dan_id},
                     {"$set": error_result},
                     upsert=True
                 )
-                raise ValueError(f"无法从Danbooru获取图片URL，ID: {dan_id}")
+                raise ValueError(f"无法从数据库记录构建URL，缺少md5或file_ext，ID: {dan_id}")
 
-            # 如果URL是相对路径，添加域名
-            if url.startswith("/"):
-                url = f"https://danbooru.donmai.us{url}"
+            # 构建Danbooru URL (根据md5前两位字符分组)
+            url = f"https://cdn.donmai.us/original/{md5[0:2]}/{md5[2:4]}/{md5}.{file_ext}"
 
             return url
 

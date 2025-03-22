@@ -6,4 +6,3 @@ motor
 httpx>=0.20.0
 argparse
 hfpics>=0.1.0
-pillow>=9.0.0
