@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gemini_caption"
+version = "0.1.0"
+description = "Batch caption generator using Google Gemini API for Danbooru images"
+readme = "README.md"
+requires-python = ">=3.7"
+authors = [
+    {name = "shiertier&qianqian", email = "shiertier@nieta.art"}
+]
+license = {text = "MIT"}
+keywords = ["gemini", "caption", "ai", "danbooru", "batch"]
+dependencies = [
+    "json-repair",
+    "google-genai",
+    "pymongo",
+    "requests",
+    "motor",
+    "httpx",
+    "argparse",
+]
+
+[project.scripts]
+gemini_caption = "gemini_caption.gemini_batch_caption:main"

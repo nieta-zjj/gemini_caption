@@ -1,0 +1,30 @@
+# Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 分发/打包
+dist/
+build/
+*.egg-info/
+
+# 虚拟环境
+venv/
+env/
+ENV/
+
+# IDE文件
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 本地配置
+.env
+*.log
+
+# 输出目录
+caption_results/
+
+# 其他
+.DS_Store
