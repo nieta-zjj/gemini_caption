@@ -16,6 +16,7 @@ setup(
         "motor",
         "httpx",
         "argparse",
+        "hfpics"
     ],
 
     # 命令行入口点

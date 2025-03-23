@@ -15,6 +15,11 @@ from typing import Union, Literal, Dict, Any, Optional, List, Set
 from gemini_caption.danbooru_url_checker import DanbooruUrlChecker, check_urls_by_key as check_urls
 from hfpics import HfPics
 
+# 检查是否在Kaggle环境中
+IS_KAGGLE = os.path.exists("/kaggle/working/")
+if IS_KAGGLE:
+    print("检测到Kaggle环境")
+
 # 使用相对导入，确保作为包安装后能正确导入
 try:
     # 当作为已安装的包导入时
@@ -33,7 +38,32 @@ except ImportError:
         from file_utils import FileUtils
         from character_analyzer import CharacterAnalyzer
 
-# 设置日志
+# 设置print函数替代日志
+def log_info(message):
+    if IS_KAGGLE:
+        print(f"INFO: {message}")
+    else:
+        logger.info(message)
+
+def log_debug(message):
+    if IS_KAGGLE:
+        print(f"DEBUG: {message}")
+    else:
+        logger.debug(message)
+
+def log_warning(message):
+    if IS_KAGGLE:
+        print(f"WARNING: {message}")
+    else:
+        logger.warning(message)
+
+def log_error(message):
+    if IS_KAGGLE:
+        print(f"ERROR: {message}")
+    else:
+        logger.error(message)
+
+# 仍然保持日志文件记录功能
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -96,13 +126,13 @@ class GeminiBatchCaption:
             self.hf_pics = HfPics(repo=hf_repo)
         else:
             self.hf_pics = HfPics(repo=hf_repo, cache_dir=hf_cache_dir)
-        logger.info(f"已初始化HFPics客户端，使用仓库: {hf_repo}")
+        log_info(f"已初始化HFPics客户端，使用仓库: {hf_repo}")
 
         # 记录HFPics使用优先级
         if self.use_hfpics_first:
-            logger.info("已启用HFPics优先获取图片模式")
+            log_info("已启用HFPics优先获取图片模式")
         else:
-            logger.info("已禁用HFPics优先获取图片模式，将优先使用URL检查器")
+            log_info("已禁用HFPics优先获取图片模式，将优先使用URL检查器")
 
         # 初始化Gemini客户端实例
         self.genai_client = genai.Client(api_key=self.api_key)
@@ -141,7 +171,7 @@ class GeminiBatchCaption:
         # 初始化并发控制信号量
         self.semaphore = asyncio.Semaphore(self.max_concurrency)
 
-        logger.info(f"GeminiBatchCaption 初始化完成，最大并行数: {self.max_concurrency}")
+        log_info(f"GeminiBatchCaption 初始化完成，最大并行数: {self.max_concurrency}")
         return self
 
     async def close(self):
@@ -159,9 +189,9 @@ class GeminiBatchCaption:
             if hasattr(self, 'url_checker') and self.url_checker:
                 self.url_checker.close()
 
-            logger.info("已关闭所有资源连接")
+            log_info("已关闭所有资源连接")
         except Exception as e:
-            logger.error(f"关闭资源时发生错误: {str(e)}")
+            log_error(f"关闭资源时发生错误: {str(e)}")
 
     def get_collection_for_id(self, dan_id):
         """
@@ -199,7 +229,7 @@ class GeminiBatchCaption:
 
             return character_reference_info, artist_name, danbooru_tags
         except Exception as e:
-            logger.error(f"获取Danbooru信息时出错: {str(e)}")
+            log_error(f"获取Danbooru信息时出错: {str(e)}")
             return None, "", ""
 
     async def get_url_by_id(self, dan_id):
@@ -234,7 +264,7 @@ class GeminiBatchCaption:
             return url
         except Exception as e:
             if not isinstance(e, ValueError):  # 如果不是已处理的404错误
-                logger.error(f"获取URL时出错: {str(e)}")
+                log_error(f"获取URL时出错: {str(e)}")
             raise
 
     async def download_image(self, image_url, dan_id=None):
@@ -258,12 +288,12 @@ class GeminiBatchCaption:
                 if response.status_code == 200:
                     return response.content
                 else:
-                    logger.warning(f"获取图片失败，状态码: {response.status_code}")
+                    log_warning(f"获取图片失败，状态码: {response.status_code}")
             except Exception as e:
-                logger.error(f"下载图片时出错: {str(e)}")
+                log_error(f"下载图片时出错: {str(e)}")
 
             if attempt < len(retry_delays) - 1:  # 如果不是最后一次尝试
-                logger.debug(f"等待 {delay} 秒后重试...")
+                log_debug(f"等待 {delay} 秒后重试...")
                 await asyncio.sleep(delay)
 
         return None
@@ -304,7 +334,7 @@ class GeminiBatchCaption:
 
             except Exception as e:
                 last_error = e
-                logger.warning(f"API调用错误: {str(e)}，重试 {attempt+1}/{self.retry_attempts}")
+                log_warning(f"API调用错误: {str(e)}，重试 {attempt+1}/{self.retry_attempts}")
                 # 增加重试延迟时间，避免频繁请求
                 retry_time = self.retry_delay * (2 ** attempt)  # 指数退避
                 await asyncio.sleep(retry_time)
@@ -331,7 +361,7 @@ class GeminiBatchCaption:
         # 使用信号量控制并发
         async with self.semaphore:
             start_time = time.time()
-            logger.info(f"开始处理Danbooru ID: {dan_id}")
+            log_info(f"开始处理Danbooru ID: {dan_id}")
 
             try:
                 # 获取对应的集合
@@ -343,7 +373,7 @@ class GeminiBatchCaption:
                     if existing_doc:
                         success = existing_doc.get("success", False)
                         status = "成功" if success else "失败"
-                        logger.info(f"ID: {dan_id} 已有{status}记录，跳过")
+                        log_info(f"ID: {dan_id} 已有{status}记录，跳过")
                         return existing_doc
 
                 # 初始化变量
@@ -355,7 +385,7 @@ class GeminiBatchCaption:
                 # 根据优先级获取图片
                 if self.use_hfpics_first:
                     # 优先从HFPics获取图片
-                    logger.info(f"尝试从HFPics获取图片ID: {dan_id}")
+                    log_info(f"尝试从HFPics获取图片ID: {dan_id}")
                     try:
                         # 使用线程池执行同步调用
                         with ThreadPoolExecutor() as executor:
@@ -366,7 +396,7 @@ class GeminiBatchCaption:
                             )
 
                         if image_bytes:
-                            logger.info(f"成功从HFPics获取图片ID: {dan_id}")
+                            log_info(f"成功从HFPics获取图片ID: {dan_id}")
 
                             # 尝试从HFPics获取图片扩展名
                             try:
@@ -384,16 +414,16 @@ class GeminiBatchCaption:
                                     file_extension = os.path.splitext(pic_url)[1][1:].lower()
                                     mime_type = self.mime_type_map.get(file_extension, "image/jpeg")
                             except Exception as e:
-                                logger.warning(f"从HFPics获取图片信息失败: {str(e)}，使用默认MIME类型")
+                                log_warning(f"从HFPics获取图片信息失败: {str(e)}，使用默认MIME类型")
                     except Exception as e:
-                        logger.warning(f"从HFPics获取图片失败: {str(e)}，将尝试从URL检查器获取")
+                        log_warning(f"从HFPics获取图片失败: {str(e)}，将尝试从URL检查器获取")
 
                 # 如果HFPics未启用或者获取失败，则从URL检查器获取
                 if image_bytes is None:
                     # 使用URL检查器获取URL
                     try:
                         image_url = await self.get_url_by_id(dan_id)
-                        logger.debug(f"获取到图片URL: {image_url}")
+                        log_debug(f"获取到图片URL: {image_url}")
 
                         # 获取文件的MIME类型
                         file_extension = os.path.splitext(image_url)[1][1:].lower()
@@ -402,13 +432,13 @@ class GeminiBatchCaption:
                         # 下载图片
                         image_bytes = await self.download_image(image_url)
                         if image_bytes:
-                            logger.info(f"成功通过URL下载图片ID: {dan_id}")
+                            log_info(f"成功通过URL下载图片ID: {dan_id}")
                     except Exception as e:
-                        logger.error(f"通过URL下载图片失败: {str(e)}")
+                        log_error(f"通过URL下载图片失败: {str(e)}")
 
                         # 如果未启用HFPics优先但URL获取失败，尝试使用HFPics作为备选
                         if not self.use_hfpics_first:
-                            logger.info(f"URL获取失败，尝试从HFPics获取图片ID: {dan_id}")
+                            log_info(f"URL获取失败，尝试从HFPics获取图片ID: {dan_id}")
                             try:
                                 # 使用线程池执行同步调用
                                 with ThreadPoolExecutor() as executor:
@@ -419,7 +449,7 @@ class GeminiBatchCaption:
                                     )
 
                                 if image_bytes:
-                                    logger.info(f"成功从HFPics获取图片ID: {dan_id}")
+                                    log_info(f"成功从HFPics获取图片ID: {dan_id}")
 
                                     # 尝试从HFPics获取图片扩展名
                                     try:
@@ -437,9 +467,9 @@ class GeminiBatchCaption:
                                             file_extension = os.path.splitext(pic_url)[1][1:].lower()
                                             mime_type = self.mime_type_map.get(file_extension, "image/jpeg")
                                     except Exception as e2:
-                                        logger.warning(f"从HFPics获取图片信息失败: {str(e2)}，使用默认MIME类型")
+                                        log_warning(f"从HFPics获取图片信息失败: {str(e2)}，使用默认MIME类型")
                             except Exception as e2:
-                                logger.warning(f"从HFPics获取图片也失败: {str(e2)}，无法获取图片")
+                                log_warning(f"从HFPics获取图片也失败: {str(e2)}，无法获取图片")
 
                 # 如果所有重试都失败
                 if image_bytes is None:
@@ -467,7 +497,7 @@ class GeminiBatchCaption:
                     image_path = os.path.join(output_dir, f"{dan_id}.{file_extension}")
                     with open(image_path, 'wb') as f:
                         f.write(image_bytes)
-                    logger.debug(f"图片已保存到: {image_path}")
+                    log_debug(f"图片已保存到: {image_path}")
 
                 # 获取Danbooru信息
                 character_reference_info, artist_name, danbooru_tags = await self.get_danbooru_info_by_id(dan_id)
@@ -481,7 +511,7 @@ class GeminiBatchCaption:
                     character_reference_info=character_reference_info
                 )
 
-                logger.info(f"开始为ID: {dan_id} 调用Gemini API...")
+                log_info(f"开始为ID: {dan_id} 调用Gemini API...")
 
                 # 调用API
                 caption = await self.call_gemini_api(prompt, image_bytes, mime_type)
@@ -490,7 +520,7 @@ class GeminiBatchCaption:
                 try:
                     caption_json = json_repair.loads(caption)
                 except Exception as e:
-                    logger.warning(f"JSON解析失败: {str(e)}，尝试使用原始文本")
+                    log_warning(f"JSON解析失败: {str(e)}，尝试使用原始文本")
                     caption_json = caption
 
                 # 准备结果
@@ -512,22 +542,22 @@ class GeminiBatchCaption:
                         {"$set": result},
                         upsert=True
                     )
-                    logger.debug(f"结果已保存到MongoDB，ID: {dan_id}，集合: {collection.name}")
+                    log_debug(f"结果已保存到MongoDB，ID: {dan_id}，集合: {collection.name}")
                 except Exception as e:
-                    logger.error(f"保存到MongoDB失败: {str(e)}")
+                    log_error(f"保存到MongoDB失败: {str(e)}")
 
                 # 如果需要保存到文件
                 if output_dir:
                     result_path = os.path.join(output_dir, f"{dan_id}_caption.json")
                     with open(result_path, 'w', encoding='utf-8') as f:
                         json.dump(result, f, ensure_ascii=False, indent=2)
-                    logger.debug(f"结果已保存到: {result_path}")
+                    log_debug(f"结果已保存到: {result_path}")
 
                 return result
 
             except Exception as e:
                 error_msg = f"处理Danbooru ID {dan_id}时出错: {type(e).__name__}: {str(e)}"
-                logger.error(error_msg)
+                log_error(error_msg)
 
                 error_result = {
                     "_id": dan_id,
@@ -544,9 +574,9 @@ class GeminiBatchCaption:
                         {"$set": error_result},
                         upsert=True
                     )
-                    logger.debug(f"错误信息已保存到MongoDB，ID: {dan_id}，集合: {collection.name}")
+                    log_debug(f"错误信息已保存到MongoDB，ID: {dan_id}，集合: {collection.name}")
                 except Exception as mongo_e:
-                    logger.error(f"保存错误信息到MongoDB失败: {str(mongo_e)}")
+                    log_error(f"保存错误信息到MongoDB失败: {str(mongo_e)}")
 
                 return error_result
 
@@ -596,7 +626,7 @@ class GeminiBatchCaption:
         # 记录开始时间
         start_time = time.time()
 
-        logger.info(f"开始批量处理 Danbooru ID范围: {start_id} - {end_id}，共 {total_count} 个")
+        log_info(f"开始批量处理 Danbooru ID范围: {start_id} - {end_id}，共 {total_count} 个")
 
         # 首先获取已经存在记录的ID列表（无论成功还是失败）
         existing_ids = set()
@@ -605,7 +635,7 @@ class GeminiBatchCaption:
         start_collection = start_id // 100000
         end_collection = end_id // 100000
 
-        logger.info(f"正在查询已处理过的记录，集合范围: {start_collection} - {end_collection}")
+        log_info(f"正在查询已处理过的记录，集合范围: {start_collection} - {end_collection}")
 
         for collection_num in range(start_collection, end_collection + 1):
             collection_name = str(collection_num)
@@ -621,14 +651,14 @@ class GeminiBatchCaption:
                 existing_ids.add(doc["_id"])
 
         already_processed_count = len(existing_ids)
-        logger.info(f"已找到 {already_processed_count} 个已存在记录，将跳过这些ID")
+        log_info(f"已找到 {already_processed_count} 个已存在记录，将跳过这些ID")
 
         # 计算需要处理的ID列表
         ids_to_process = [id for id in range(start_id, end_id + 1) if id not in existing_ids]
         remaining_count = len(ids_to_process)
 
         if remaining_count == 0:
-            logger.info("所有ID都已经存在记录，没有需要处理的ID")
+            log_info("所有ID都已经存在记录，没有需要处理的ID")
             return {
                 "total": total_count,
                 "success": 0,
@@ -638,7 +668,7 @@ class GeminiBatchCaption:
                 "time": time.time() - start_time
             }
 
-        logger.info(f"需要处理的ID数量: {remaining_count}")
+        log_info(f"需要处理的ID数量: {remaining_count}")
 
         # 创建处理任务
         tasks = []
@@ -653,7 +683,7 @@ class GeminiBatchCaption:
 
                 if i % 10 == 0 or i == remaining_count - 1:  # 每10个ID或最后一个ID时显示进度
                     progress = (i + 1) / remaining_count * 100
-                    logger.info(f"进度: {progress:.2f}% ({i+1}/{remaining_count})")
+                    log_info(f"进度: {progress:.2f}% ({i+1}/{remaining_count})")
 
                 if result:
                     if result.get("success"):
@@ -665,7 +695,7 @@ class GeminiBatchCaption:
                             error_count += 1
             except Exception as e:
                 error_count += 1
-                logger.error(f"处理任务时出错: {str(e)}")
+                log_error(f"处理任务时出错: {str(e)}")
 
         end_time = time.time()
 
@@ -679,7 +709,7 @@ class GeminiBatchCaption:
             "time": end_time - start_time
         }
 
-        logger.info(f"批量处理完成. 总计: {total_count}, 已有记录: {already_processed_count}, 本次成功: {success_count}, 本次错误: {error_count}, 本次跳过: {skipped_count}")
+        log_info(f"批量处理完成. 总计: {total_count}, 已有记录: {already_processed_count}, 本次成功: {success_count}, 本次错误: {error_count}, 本次跳过: {skipped_count}")
 
         return stats
 
@@ -719,7 +749,7 @@ async def run_batch_with_args(key=None, start_id=None, end_id=None, max_concurre
     if key is not None:
         start_id = key * 100000
         end_id = (key + 1) * 100000 - 1  # 减1使范围为闭区间
-        logger.info(f"使用key={key}，计算ID范围: {start_id}-{end_id}")
+        log_info(f"使用key={key}，计算ID范围: {start_id}-{end_id}")
     elif start_id is None or end_id is None:
         raise ValueError("必须指定key或者同时指定start_id和end_id")
 
@@ -762,14 +792,14 @@ async def run_batch_with_args(key=None, start_id=None, end_id=None, max_concurre
         skipped = stats.get("skipped", 0)
         time_spent = stats.get("time", 0)
 
-        logger.info(f"批处理统计:")
-        logger.info(f"  总ID数量: {total}")
-        logger.info(f"  已有记录: {already_processed} ({(already_processed/total*100 if total else 0):.2f}%)")
-        logger.info(f"  本次成功: {success} ({(success/total*100 if total else 0):.2f}%)")
-        logger.info(f"  本次错误: {error} ({(error/total*100 if total else 0):.2f}%)")
-        logger.info(f"  本次跳过: {skipped}")
-        logger.info(f"  总耗时: {time_spent:.2f}秒")
-        logger.info(f"  总结: 共处理 {already_processed + success + error} 个ID ({(already_processed + success + error)/total*100 if total else 0:.2f}%)，剩余 {total - already_processed - success - error - skipped} 个ID未处理")
+        log_info(f"批处理统计:")
+        log_info(f"  总ID数量: {total}")
+        log_info(f"  已有记录: {already_processed} ({(already_processed/total*100 if total else 0):.2f}%)")
+        log_info(f"  本次成功: {success} ({(success/total*100 if total else 0):.2f}%)")
+        log_info(f"  本次错误: {error} ({(error/total*100 if total else 0):.2f}%)")
+        log_info(f"  本次跳过: {skipped}")
+        log_info(f"  总耗时: {time_spent:.2f}秒")
+        log_info(f"  总结: 共处理 {already_processed + success + error} 个ID ({(already_processed + success + error)/total*100 if total else 0:.2f}%)，剩余 {total - already_processed - success - error - skipped} 个ID未处理")
 
         return stats
 
@@ -777,7 +807,7 @@ async def run_batch_with_args(key=None, start_id=None, end_id=None, max_concurre
         # 确保资源正确释放
         if 'batch_captioner' in locals():
             await batch_captioner.close()
-            logger.info("已关闭所有资源连接")
+            log_info("已关闭所有资源连接")
 
 # 命令行入口点
 def main():

@@ -21,6 +21,7 @@ dependencies = [
     "motor",
     "httpx",
     "argparse",
+    "hfpics"
 ]
 
 [project.scripts]
