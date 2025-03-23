@@ -9,7 +9,10 @@ import httpx
 from motor.motor_asyncio import AsyncIOMotorClient
 from concurrent.futures import ThreadPoolExecutor
 import json_repair
-from typing import Union, Literal
+from typing import Union, Literal, Dict, Any, Optional, List, Set
+
+# 导入新增加的DanbooruUrlChecker
+from gemini_caption.danbooru_url_checker import DanbooruUrlChecker, check_urls_by_key as check_urls
 from hfpics import HfPics
 
 # 使用相对导入，确保作为包安装后能正确导入
@@ -47,7 +50,8 @@ class GeminiBatchCaption:
                  language="zh",
                  max_concurrency=5,
                  hf_repo="picollect/danbooru",
-                 hf_cache_dir=None):
+                 hf_cache_dir=None,
+                 use_hfpics_first=False):
         """
         初始化异步批量图像打标类
 
@@ -59,6 +63,7 @@ class GeminiBatchCaption:
             max_concurrency: 最大并行处理数量
             hf_repo: Hugging Face数据集仓库名称
             hf_cache_dir: HFPics缓存目录路径，默认为None使用HFPics默认路径
+            use_hfpics_first: 是否优先使用HFPics获取图片，默认为False
         """
         # 初始化Gemini客户端
         if api_key:
@@ -78,6 +83,7 @@ class GeminiBatchCaption:
         self.character_analyzer = None  # 在运行时初始化
         self.retry_attempts = 3
         self.retry_delay = 5  # 秒
+        self.use_hfpics_first = use_hfpics_first  # 是否优先使用HFPics
 
         # 初始化HFPics客户端
         if hf_cache_dir is None:
@@ -87,6 +93,12 @@ class GeminiBatchCaption:
             self.hf_pics = HfPics(repo=hf_repo, cache_dir=hf_cache_dir)
         logger.info(f"已初始化HFPics客户端，使用仓库: {hf_repo}")
 
+        # 记录HFPics使用优先级
+        if self.use_hfpics_first:
+            logger.info("已启用HFPics优先获取图片模式")
+        else:
+            logger.info("已禁用HFPics优先获取图片模式，将优先使用URL检查器")
+
         # 初始化Gemini客户端实例
         self.genai_client = genai.Client(api_key=self.api_key)
 
@@ -95,14 +107,22 @@ class GeminiBatchCaption:
             "png": "image/png",
             "jpg": "image/jpeg",
             "jpeg": "image/jpeg",
-            "webp": "image/webp"
+            "webp": "image/webp",
+            "gif": "image/gif"
         }
+
+        # 初始化DanbooruUrlChecker
+        self.url_checker = None
 
     async def initialize(self):
         """异步初始化方法"""
         # 初始化MongoDB连接
         self.mongo_client = AsyncIOMotorClient(self.mongodb_uri)
         self.db = self.mongo_client["gemini_captions_danbooru"]
+
+        # 初始化DanbooruUrlChecker (使用同步版本)
+        self.url_checker = DanbooruUrlChecker(self.mongodb_uri)
+        self.url_checker.connect()
 
         # 初始化角色分析器
         self.character_analyzer = CharacterAnalyzer(self.mongodb_uri)
@@ -129,6 +149,10 @@ class GeminiBatchCaption:
             # 关闭MongoDB连接
             if hasattr(self, 'mongo_client') and self.mongo_client:
                 self.mongo_client.close()
+
+            # 关闭URL检查器
+            if hasattr(self, 'url_checker') and self.url_checker:
+                self.url_checker.close()
 
             logger.info("已关闭所有资源连接")
         except Exception as e:
@@ -174,43 +198,18 @@ class GeminiBatchCaption:
             return None, "", ""
 
     async def get_url_by_id(self, dan_id):
-        """异步从MongoDB获取图片URL"""
+        """异步获取图片URL"""
         try:
-            # 从MongoDB的danbooru数据库的pics表获取数据
-            danbooru_db = self.mongo_client["danbooru"]
-            pics_collection = danbooru_db["pics"]
+            # 使用URL检查器获取URL
+            url, status = self.url_checker.get_url_by_id(dan_id)
 
-            # 查询对应ID的记录
-            pic_data = await pics_collection.find_one({"_id": int(dan_id)})
-
-            if pic_data is None:
+            if status != 200:
+                # 如果状态不是200，说明获取URL失败
                 error_result = {
                     "_id": dan_id,
                     "success": False,
-                    "error": "Post not found in database",
-                    "status_code": 404,
-                    "created_at": time.time()
-                }
-                # 保存404错误到MongoDB
-                collection = self.get_collection_for_id(dan_id)
-                await collection.update_one(
-                    {"_id": dan_id},
-                    {"$set": error_result},
-                    upsert=True
-                )
-                raise ValueError(f"Danbooru post {dan_id} not found in database (404)")
-
-            # 从数据中构建URL
-            # 使用md5和file_ext构建URL
-            md5 = pic_data.get("md5")
-            file_ext = pic_data.get("file_ext")
-
-            if not md5 or not file_ext:
-                error_result = {
-                    "_id": dan_id,
-                    "success": False,
-                    "error": "Post URL not found",
-                    "status_code": 404,
+                    "error": f"Failed to get URL, status: {status}",
+                    "status_code": status,
                     "created_at": time.time()
                 }
                 # 保存错误到MongoDB
@@ -220,13 +219,14 @@ class GeminiBatchCaption:
                     {"$set": error_result},
                     upsert=True
                 )
-                raise ValueError(f"无法从数据库记录构建URL，缺少md5或file_ext，ID: {dan_id}")
 
-            # 构建Danbooru URL (根据md5前两位字符分组)
-            url = f"https://cdn.donmai.us/original/{md5[0:2]}/{md5[2:4]}/{md5}.{file_ext}"
+                # 根据不同错误代码抛出不同异常
+                if status == 404:
+                    raise ValueError(f"Danbooru post {dan_id} not found in database (404)")
+                else:
+                    raise ValueError(f"无法获取图片URL，ID: {dan_id}, 状态码: {status}")
 
             return url
-
         except Exception as e:
             if not isinstance(e, ValueError):  # 如果不是已处理的404错误
                 logger.error(f"获取URL时出错: {str(e)}")
@@ -341,58 +341,100 @@ class GeminiBatchCaption:
                         logger.info(f"ID: {dan_id} 已有{status}记录，跳过")
                         return existing_doc
 
-                # 首先尝试从HFPics获取图片
-                logger.info(f"尝试从HFPics获取图片ID: {dan_id}")
+                # 初始化变量
                 image_bytes = None
                 image_url = None
                 mime_type = "image/jpeg"  # 默认MIME类型
                 file_extension = "jpg"    # 默认文件扩展名
 
-                # 尝试使用HFPics获取图片
-                try:
-                    # 使用线程池执行同步调用
-                    with ThreadPoolExecutor() as executor:
-                        loop = asyncio.get_event_loop()
-                        image_bytes = await loop.run_in_executor(
-                            executor,
-                            lambda: self.hf_pics.pic(int(dan_id), return_type="content")
-                        )
+                # 根据优先级获取图片
+                if self.use_hfpics_first:
+                    # 优先从HFPics获取图片
+                    logger.info(f"尝试从HFPics获取图片ID: {dan_id}")
+                    try:
+                        # 使用线程池执行同步调用
+                        with ThreadPoolExecutor() as executor:
+                            loop = asyncio.get_event_loop()
+                            image_bytes = await loop.run_in_executor(
+                                executor,
+                                lambda: self.hf_pics.pic(int(dan_id), return_type="content")
+                            )
 
-                    if image_bytes:
-                        logger.info(f"成功从HFPics获取图片ID: {dan_id}")
+                        if image_bytes:
+                            logger.info(f"成功从HFPics获取图片ID: {dan_id}")
 
-                        # 尝试从HFPics获取图片扩展名
-                        try:
-                            # 尝试获取图片原始路径，从中提取扩展名
-                            with ThreadPoolExecutor() as executor:
-                                pic_info = await loop.run_in_executor(
-                                    executor,
-                                    lambda: self.hf_pics.pic_info(int(dan_id))
-                                )
+                            # 尝试从HFPics获取图片扩展名
+                            try:
+                                # 尝试获取图片原始路径，从中提取扩展名
+                                with ThreadPoolExecutor() as executor:
+                                    pic_info = await loop.run_in_executor(
+                                        executor,
+                                        lambda: self.hf_pics.pic_info(int(dan_id))
+                                    )
 
-                            if pic_info and 'pic_url' in pic_info:
-                                pic_url = pic_info['pic_url']
-                                image_url = pic_url  # 使用HFPics中记录的URL
-                                # 从URL中提取文件扩展名
-                                file_extension = os.path.splitext(pic_url)[1][1:].lower()
-                                mime_type = self.mime_type_map.get(file_extension, "image/jpeg")
-                        except Exception as e:
-                            logger.warning(f"从HFPics获取图片信息失败: {str(e)}，使用默认MIME类型")
-                except Exception as e:
-                    logger.warning(f"从HFPics获取图片失败: {str(e)}，将尝试从Danbooru获取")
+                                if pic_info and 'pic_url' in pic_info:
+                                    pic_url = pic_info['pic_url']
+                                    image_url = pic_url  # 使用HFPics中记录的URL
+                                    # 从URL中提取文件扩展名
+                                    file_extension = os.path.splitext(pic_url)[1][1:].lower()
+                                    mime_type = self.mime_type_map.get(file_extension, "image/jpeg")
+                            except Exception as e:
+                                logger.warning(f"从HFPics获取图片信息失败: {str(e)}，使用默认MIME类型")
+                    except Exception as e:
+                        logger.warning(f"从HFPics获取图片失败: {str(e)}，将尝试从URL检查器获取")
 
-                # 如果从HFPics获取失败，则从Danbooru获取
+                # 如果HFPics未启用或者获取失败，则从URL检查器获取
                 if image_bytes is None:
-                    # 获取图片URL
-                    image_url = await self.get_url_by_id(dan_id)
-                    logger.debug(f"获取到图片URL: {image_url}")
+                    # 使用URL检查器获取URL
+                    try:
+                        image_url = await self.get_url_by_id(dan_id)
+                        logger.debug(f"获取到图片URL: {image_url}")
 
-                    # 获取文件的MIME类型
-                    file_extension = os.path.splitext(image_url)[1][1:].lower()
-                    mime_type = self.mime_type_map.get(file_extension, "image/jpeg")
+                        # 获取文件的MIME类型
+                        file_extension = os.path.splitext(image_url)[1][1:].lower()
+                        mime_type = self.mime_type_map.get(file_extension, "image/jpeg")
 
-                    # 下载图片
-                    image_bytes = await self.download_image(image_url)
+                        # 下载图片
+                        image_bytes = await self.download_image(image_url)
+                        if image_bytes:
+                            logger.info(f"成功通过URL下载图片ID: {dan_id}")
+                    except Exception as e:
+                        logger.error(f"通过URL下载图片失败: {str(e)}")
+
+                        # 如果未启用HFPics优先但URL获取失败，尝试使用HFPics作为备选
+                        if not self.use_hfpics_first:
+                            logger.info(f"URL获取失败，尝试从HFPics获取图片ID: {dan_id}")
+                            try:
+                                # 使用线程池执行同步调用
+                                with ThreadPoolExecutor() as executor:
+                                    loop = asyncio.get_event_loop()
+                                    image_bytes = await loop.run_in_executor(
+                                        executor,
+                                        lambda: self.hf_pics.pic(int(dan_id), return_type="content")
+                                    )
+
+                                if image_bytes:
+                                    logger.info(f"成功从HFPics获取图片ID: {dan_id}")
+
+                                    # 尝试从HFPics获取图片扩展名
+                                    try:
+                                        # 尝试获取图片原始路径，从中提取扩展名
+                                        with ThreadPoolExecutor() as executor:
+                                            pic_info = await loop.run_in_executor(
+                                                executor,
+                                                lambda: self.hf_pics.pic_info(int(dan_id))
+                                            )
+
+                                        if pic_info and 'pic_url' in pic_info:
+                                            pic_url = pic_info['pic_url']
+                                            image_url = pic_url  # 使用HFPics中记录的URL
+                                            # 从URL中提取文件扩展名
+                                            file_extension = os.path.splitext(pic_url)[1][1:].lower()
+                                            mime_type = self.mime_type_map.get(file_extension, "image/jpeg")
+                                    except Exception as e2:
+                                        logger.warning(f"从HFPics获取图片信息失败: {str(e2)}，使用默认MIME类型")
+                            except Exception as e2:
+                                logger.warning(f"从HFPics获取图片也失败: {str(e2)}，无法获取图片")
 
                 # 如果所有重试都失败
                 if image_bytes is None:
@@ -502,6 +544,25 @@ class GeminiBatchCaption:
                     logger.error(f"保存错误信息到MongoDB失败: {str(mongo_e)}")
 
                 return error_result
+
+    async def process_batch_by_key(self, key, output_dir=None, save_image=False):
+        """
+        批量处理一个key范围内的Danbooru ID
+        key对应的ID范围为: [key*100000, (key+1)*100000)
+
+        Args:
+            key: 区间键值，用于计算ID范围
+            output_dir: 输出目录
+            save_image: 是否保存下载的图片
+
+        Returns:
+            处理结果统计
+        """
+        # 计算ID范围
+        start_id = key * 100000
+        end_id = (key + 1) * 100000 - 1  # 减1使范围为闭区间
+
+        return await self.process_batch(start_id, end_id, output_dir, save_image)
 
     async def process_batch(self, start_id, end_id, output_dir=None, save_image=False):
         """
@@ -618,15 +679,16 @@ class GeminiBatchCaption:
         return stats
 
 # 批量处理入口点
-async def run_batch_with_args(start_id, end_id, max_concurrency=5, api_key=None, model_id=None, language="zh",
-                             mongodb_uri=None, output_dir="caption_results", save_image=False,
-                             hf_repo="picollect/danbooru", hf_cache_dir=None):
+async def run_batch_with_args(key=None, start_id=None, end_id=None, max_concurrency=5, api_key=None, model_id=None,
+                             language="zh", mongodb_uri=None, output_dir="caption_results", save_image=False,
+                             hf_repo="picollect/danbooru", hf_cache_dir=None, use_hfpics_first=False):
     """
     使用指定参数运行批处理
 
     Args:
-        start_id: 起始ID
-        end_id: 结束ID
+        key: 区间键值，优先使用此参数，计算ID范围为 [key*100000, (key+1)*100000)
+        start_id: 起始ID（如果key未指定）
+        end_id: 结束ID（如果key未指定）
         max_concurrency: 最大并行处理数量
         api_key: Gemini API密钥
         model_id: 使用的模型ID
@@ -636,6 +698,7 @@ async def run_batch_with_args(start_id, end_id, max_concurrency=5, api_key=None,
         save_image: 是否保存下载的图片
         hf_repo: Hugging Face数据集仓库名称
         hf_cache_dir: HFPics缓存目录路径
+        use_hfpics_first: 是否优先使用HFPics获取图片，默认为False
 
     Returns:
         处理结果统计
@@ -645,7 +708,15 @@ async def run_batch_with_args(start_id, end_id, max_concurrency=5, api_key=None,
         model_id = "gemini-2.0-flash-lite-001"
 
     if mongodb_uri is None:
-        mongodb_uri = "mongodb://8.153.97.53:27815/"
+        mongodb_uri = "mongodb://localhost:27017/"
+
+    # 计算ID范围
+    if key is not None:
+        start_id = key * 100000
+        end_id = (key + 1) * 100000 - 1  # 减1使范围为闭区间
+        logger.info(f"使用key={key}，计算ID范围: {start_id}-{end_id}")
+    elif start_id is None or end_id is None:
+        raise ValueError("必须指定key或者同时指定start_id和end_id")
 
     try:
         # 初始化批处理器
@@ -656,19 +727,27 @@ async def run_batch_with_args(start_id, end_id, max_concurrency=5, api_key=None,
             mongodb_uri=mongodb_uri,
             max_concurrency=max_concurrency,
             hf_repo=hf_repo,
-            hf_cache_dir=hf_cache_dir
+            hf_cache_dir=hf_cache_dir,
+            use_hfpics_first=use_hfpics_first
         )
 
         # 异步初始化
         await batch_captioner.initialize()
 
         # 运行批处理
-        stats = await batch_captioner.process_batch(
-            start_id=start_id,
-            end_id=end_id,
-            output_dir=output_dir,
-            save_image=save_image
-        )
+        if key is not None:
+            stats = await batch_captioner.process_batch_by_key(
+                key=key,
+                output_dir=output_dir,
+                save_image=save_image
+            )
+        else:
+            stats = await batch_captioner.process_batch(
+                start_id=start_id,
+                end_id=end_id,
+                output_dir=output_dir,
+                save_image=save_image
+            )
 
         # 输出详细统计信息
         total = stats.get("total", 0)
@@ -701,8 +780,13 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description='批量处理Danbooru图像并生成标题')
-    parser.add_argument('--start-id', type=int, required=True, help='起始ID')
-    parser.add_argument('--end-id', type=int, required=True, help='结束ID')
+    # 添加key参数，与start-id和end-id互斥
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--key', type=int, help='区间键值，用于计算ID范围 [key*100000, (key+1)*100000)')
+    group.add_argument('--start-id', type=int, help='起始ID')
+    parser.add_argument('--end-id', type=int, help='结束ID（仅在使用--start-id时需要）')
+
+    # 其他参数
     parser.add_argument('--max-concurrency', type=int, default=100, help='最大并行处理数量')
     parser.add_argument('--api-key', type=str, help='Gemini API密钥')
     parser.add_argument('--model-id', type=str, default='gemini-2.0-flash-lite-001', help='使用的模型ID')
@@ -712,11 +796,17 @@ def main():
     parser.add_argument('--save-image', action='store_true', default=False, help='是否保存下载的图片')
     parser.add_argument('--hf-repo', type=str, default='picollect/danbooru', help='Hugging Face数据集仓库名称')
     parser.add_argument('--hf-cache-dir', type=str, help='HFPics缓存目录路径')
+    parser.add_argument('--use-hfpics-first', action='store_true', default=False, help='是否优先使用HFPics获取图片')
 
     args = parser.parse_args()
 
+    # 验证参数
+    if args.start_id is not None and args.end_id is None:
+        parser.error("当使用--start-id时，必须同时提供--end-id")
+
     # 运行批处理
     asyncio.run(run_batch_with_args(
+        key=args.key,
         start_id=args.start_id,
         end_id=args.end_id,
         max_concurrency=args.max_concurrency,
@@ -727,7 +817,8 @@ def main():
         output_dir=args.output_dir,
         save_image=args.save_image,
         hf_repo=args.hf_repo,
-        hf_cache_dir=args.hf_cache_dir
+        hf_cache_dir=args.hf_cache_dir,
+        use_hfpics_first=args.use_hfpics_first
     ))
 
 if __name__ == "__main__":
