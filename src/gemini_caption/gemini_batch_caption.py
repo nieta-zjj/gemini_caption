@@ -83,7 +83,7 @@ class GeminiBatchCaption:
                  model_id="gemini-2.0-flash-lite-001",
                  mongodb_uri=None,
                  language="zh",
-                 max_concurrency=5,
+                 max_concurrency=1000,
                  hf_repo="picollect/danbooru",
                  hf_cache_dir=None,
                  use_hfpics_first=False):
@@ -822,7 +822,7 @@ def main():
     parser.add_argument('--end-id', type=int, help='结束ID（仅在使用--start-id时需要）')
 
     # 其他参数
-    parser.add_argument('--max-concurrency', type=int, default=100, help='最大并行处理数量')
+    parser.add_argument('--max-concurrency', type=int, default=1000, help='最大并行处理数量')
     parser.add_argument('--api-key', type=str, help='Gemini API密钥')
     parser.add_argument('--model-id', type=str, default='gemini-2.0-flash-lite-001', help='使用的模型ID')
     parser.add_argument('--language', type=str, default='zh', help='输出语言 (en 或 zh)')
