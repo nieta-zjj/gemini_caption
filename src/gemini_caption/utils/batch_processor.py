@@ -13,6 +13,8 @@ from gemini_caption.utils.image_processor import ImageProcessor
 from gemini_caption.utils.gemini_api_client import GeminiApiClient
 from gemini_caption.utils.caption_promt_utils import CaptionPromptUtils
 from gemini_caption.mongo_collections import DanbooruPics, DanbooruGeminiCaptions
+from gemini_caption.utils.character_analyzer import CharacterAnalyzer
+
 
 class BatchProcessor:
     """
@@ -185,12 +187,14 @@ class BatchProcessor:
 
         # 获取角色参考信息（如果有CharacterAnalyzer）
         character_reference_info = None
-        try:
-            from gemini_caption.character_analyzer import CharacterAnalyzer
-            analyzer = CharacterAnalyzer(client_url=self.mongodb_uri)
-            character_reference_info = await analyzer.get_visualize_tree_by_pid(dan_id, self.language)
-        except (ImportError, Exception) as e:
-            log_debug(f"无法获取角色参考信息: {str(e)}")
+        if CharacterAnalyzer is not None:
+            try:
+                analyzer = CharacterAnalyzer(client_url=self.mongodb_uri)
+                character_reference_info = await analyzer.get_visualize_tree_by_pid(dan_id, self.language)
+            except Exception as e:
+                log_debug(f"无法获取角色参考信息: {str(e)}")
+        else:
+            log_debug("角色分析器模块未导入，跳过角色参考信息获取")
 
         # 构建提示
         prompt = self.caption_utils.build_prompt(

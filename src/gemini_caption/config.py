@@ -18,6 +18,8 @@ class Config:
     MODEL_ID = os.getenv("MODEL_ID", "gemini-2.0-flash-lite-001")
 
     LANGUAGE = os.getenv("LANGUAGE", "zh")
+    if LANGUAGE not in ["zh", "en"]:
+        LANGUAGE = "zh"
 
     HF_REPO = os.getenv("HF_REPO", "picollect/danbooru")
     USE_HFPICS_FIRST = bool(int(os.getenv("USE_HFPICS_FIRST", "0")))
