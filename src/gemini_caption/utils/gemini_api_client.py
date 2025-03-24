@@ -5,6 +5,7 @@ import time
 import json_repair
 from typing import Dict, Any, Optional, Union, List
 import random
+import traceback  # 添加traceback模块导入
 
 # 导入日志工具
 from gemini_caption.utils.logger_utils import log_info, log_debug, log_warning, log_error
@@ -108,20 +109,87 @@ class GeminiApiClient:
                     ),
                 )
 
+                # 检查响应是否有效
+                if not response:
+                    last_error = Exception(f"API返回无效响应: 响应对象为None")
+                    log_warning(f"API返回空响应对象，重试 {attempt+1}/{self.retry_attempts}")
+                    await self._delay_retry(attempt)
+                    continue
+
+                # 记录完整响应对象信息，帮助调试
+                log_debug(f"API响应对象: {repr(response)}")
+                log_debug(f"API响应对象类型: {type(response)}")
+                log_debug(f"API响应对象属性: {dir(response)}")
+
+                # 检查响应是否有text属性
+                if not hasattr(response, 'text'):
+                    last_error = Exception(f"API响应对象没有text属性: {repr(response)}")
+                    log_warning(f"API响应缺少text属性，重试 {attempt+1}/{self.retry_attempts}")
+                    await self._delay_retry(attempt)
+                    continue
+
+                # 检查text是否为空
+                if not response.text:
+                    # 检查是否因为内容政策被拦截
+                    prohibited_content = False
+                    policy_violation_reason = ""
+
+                    if hasattr(response, 'candidates') and response.candidates:
+                        for i, candidate in enumerate(response.candidates):
+                            if hasattr(candidate, 'finish_reason'):
+                                if candidate.finish_reason == types.FinishReason.PROHIBITED_CONTENT:
+                                    prohibited_content = True
+                                    policy_violation_reason = "PROHIBITED_CONTENT"
+                                    log_warning(f"生成内容被安全过滤器拦截: {policy_violation_reason}")
+                                elif candidate.finish_reason == types.FinishReason.SAFETY:
+                                    prohibited_content = True
+                                    policy_violation_reason = "SAFETY"
+                                    log_warning(f"生成内容被安全过滤器拦截: {policy_violation_reason}")
+                                elif candidate.finish_reason:
+                                    log_debug(f"响应候选项 {i} 完成原因: {candidate.finish_reason}")
+
+                            if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
+                                log_debug(f"响应候选项 {i} 安全评级: {candidate.safety_ratings}")
+
+                    if prohibited_content:
+                        # 对于内容政策违规，提供更具体的错误信息
+                        log_warning(f"API响应因内容政策违规被拦截: {repr(response)}，原因: {policy_violation_reason}")
+
+                        # 对于内容违规，直接返回结果，不再重试
+                        processing_time = time.time() - start_time
+                        log_info(f"检测到内容政策违规，不进行重试，直接返回结果。处理时间: {processing_time:.2f}秒")
+
+                        return {
+                            "success": False,
+                            "error": f"内容政策违规被拦截: {policy_violation_reason}",
+                            "error_type": "ContentPolicyViolation",
+                            "processing_time": processing_time,
+                            "status_code": 999  # 特定状态码表示内容政策违规
+                        }
+                    else:
+                        # 其他空响应情况
+                        last_error = Exception(f"API响应text为空: {repr(response)}")
+                        log_warning(f"API响应text为空，重试 {attempt+1}/{self.retry_attempts}")
+                        await self._delay_retry(attempt)
+                        continue
+
                 # 提取响应文本
                 caption = response.text
+                log_debug(f"API返回响应: {caption[:100]}..." if len(caption) > 100 else caption)
                 break
 
             except ConnectionError as e:
                 # 网络连接错误，适合重试
                 last_error = e
-                log_warning(f"网络错误，重试 {attempt+1}/{self.retry_attempts}")
+                error_stack = traceback.format_exc()  # 获取完整错误栈
+                log_warning(f"网络错误，重试 {attempt+1}/{self.retry_attempts}\n错误详情: {str(e)}\n错误栈: {error_stack}")
                 await self._delay_retry(attempt)
 
             except Exception as e:
                 # 其他错误
                 last_error = e
-                log_warning(f"API调用错误: {str(e)}，重试 {attempt+1}/{self.retry_attempts}")
+                error_stack = traceback.format_exc()  # 获取完整错误栈
+                log_warning(f"API调用错误，重试 {attempt+1}/{self.retry_attempts}\n错误类型: {type(e).__name__}\n错误详情: {str(e)}\n错误栈: {error_stack}")
                 await self._delay_retry(attempt)
 
         # 处理结果
@@ -136,24 +204,47 @@ class GeminiApiClient:
                     "success": True,
                     "caption": parsed_caption,
                     "raw_response": caption,
-                    "processing_time": processing_time
+                    "processing_time": processing_time,
+                    "status_code": 200
                 }
             except Exception as e:
-                log_warning(f"JSON解析失败: {str(e)}，返回原始文本")
+                error_stack = traceback.format_exc()
+                log_warning(f"JSON解析失败\n错误类型: {type(e).__name__}\n错误详情: {str(e)}\n错误栈: {error_stack}")
                 return {
-                    "success": True,
-                    "caption": caption,  # 返回原始文本
+                    "success": False,
                     "raw_response": caption,
                     "processing_time": processing_time,
-                    "parse_error": str(e)
+                    "parse_error": str(e),
+                    "parse_error_stack": error_stack,
+                    "error": f"JSON解析失败: {str(e)}",
+                    "status_code": 400
                 }
         else:
             # 所有重试都失败
-            log_error(f"所有Gemini API调用重试均失败: {str(last_error)}")
+            processing_time = time.time() - start_time
+
+            # 如果last_error仍为None，说明发生了未捕获的失败情况
+            if last_error is None:
+                last_error = Exception("所有API尝试均失败，但未捕获到具体异常。可能是API返回了无效响应或请求超时")
+                log_warning("检测到异常情况：所有尝试均失败但未捕获到具体异常")
+
+            error_type = type(last_error).__name__
+            error_message = str(last_error)
+            try:
+                error_stack = traceback.format_exception(type(last_error), last_error, last_error.__traceback__)
+                error_stack = "".join(error_stack)
+            except Exception as stack_err:
+                error_stack = f"无法获取错误栈: {str(stack_err)}"
+
+            log_error(f"所有Gemini API调用重试均失败\n错误类型: {error_type}\n错误详情: {error_message}\n错误栈: {error_stack}")
+
             return {
                 "success": False,
-                "error": f"API调用失败: {str(last_error)}",
-                "processing_time": time.time() - start_time
+                "error": f"API调用失败: {error_message}",
+                "error_type": error_type,
+                "error_stack": error_stack,
+                "processing_time": processing_time,
+                "status_code": 500
             }
 
     async def _delay_retry(self, attempt: int):

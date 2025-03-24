@@ -161,11 +161,15 @@ class DanbooruGeminiCaptions:
                 coll_start = max(start_id, coll_key * 100000)
                 coll_end = min(end_id, (coll_key + 1) * 100000)
 
-                # 查询该范围内已成功处理的ID
+                # 查询该范围内已成功处理的ID，prompt存在或success=true或status_code in in: [200, 403, 404, 999]
                 cursor = collection.find(
                     {
                         "_id": {"$gte": coll_start, "$lt": coll_end},
-                        "success": True
+                        "$or": [
+                            {"prompt": {"$exists": True}},
+                            {"success": True},
+                            {"status_code": {"$in": [200, 403, 404, 999]}}
+                        ]
                     },
                     {"_id": 1}
                 )

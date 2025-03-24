@@ -72,6 +72,9 @@ class DanbooruPicDoc(BaseModel):
         # 如果没设置status或status为0，则使用默认值404
         elif not self.status:
             self.status = 404
+        if 'gif' in self.url:
+            self.status = 405
+            self.url = ""
         return self
 
 

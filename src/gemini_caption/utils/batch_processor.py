@@ -152,13 +152,25 @@ class BatchProcessor:
         url = custom_url
         if not url:
             url, status = await self.danbooru_pics.get_url_by_id(dan_id)
-            if status != 200 or not url:
+            if status != 200:
                 log_warning(f"无法获取ID {dan_id} 的URL，状态码: {status}")
                 return {
                     "success": False,
                     "error": f"无法获取URL，状态码: {status}",
-                    "processing_time": time.time() - start_time
+                    "processing_time": time.time() - start_time,
+                    "status_code": status
                 }
+
+        # 在获取URL后，添加对gif的检查
+        if url and (url.lower().endswith('.gif') or '.gif' in url.lower()):
+            log_warning(f"ID {dan_id} 是GIF文件，跳过处理")
+            return {
+                "success": False,
+                "error": "GIF文件不处理",
+                "image_url": url,
+                "processing_time": time.time() - start_time,
+                "status_code": 405
+            }
 
         # 处理图片
         image_result = await self.image_processor.process_image_by_id(dan_id, custom_url=url)
@@ -218,7 +230,8 @@ class BatchProcessor:
                 "success": False,
                 "error": api_result.get("error", "API调用失败"),
                 "image_url": url,
-                "processing_time": time.time() - start_time
+                "processing_time": time.time() - start_time,
+                "status_code": api_result.get("status_code", 500)
             }
             await self.danbooru_gemini_captions.save_caption_result(dan_id, error_result)
             log_error(f"处理ID {dan_id} 失败: {error_result['error']}")
@@ -235,6 +248,7 @@ class BatchProcessor:
             "tags": danbooru_tags,
             "success": True,
             "processing_time": time.time() - start_time,
+            "status_code": api_result.get("status_code", 200)
         }
 
         # 保存到数据库
