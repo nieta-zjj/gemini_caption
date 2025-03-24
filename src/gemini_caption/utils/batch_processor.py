@@ -302,7 +302,7 @@ class BatchProcessor:
         url_map = {}  # ID -> URL的映射
 
         # 从start_id到end_id遍历，每次处理一批
-        batch_size = 1000
+        batch_size = 10000
         for batch_start in range(start_id, end_id, batch_size):
             batch_end = min(batch_start + batch_size, end_id)
             id_batch = list(range(batch_start, batch_end))
