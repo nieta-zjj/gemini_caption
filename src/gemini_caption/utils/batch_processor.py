@@ -405,12 +405,87 @@ class BatchProcessor:
         range_start = base_id + start_id if start_id is not None else base_id
         range_end = base_id + end_id if end_id is not None else base_id + 100000
 
-        return await self.process_batch(
-            start_id=range_start,
-            end_id=range_end,
-            output_dir=output_dir,
-            save_image=save_image
-        )
+        log_info(f"开始批量处理ID范围: {range_start} - {range_end}")
+
+        # 获取已经处理过的ID
+        processed_ids = await self.danbooru_gemini_captions.get_processed_ids(range_start, range_end)
+        log_info(f"已处理的ID数量: {len(processed_ids)}")
+
+        # 使用check_urls_by_key方法获取URL信息，提高效率
+        log_info(f"使用check_urls_by_key获取ID范围 {base_id} - {base_id + 100000} 的URL信息")
+        url_batch_result = await self.danbooru_pics.check_urls_by_key(key)
+
+        # 找出需要处理的ID，但只考虑指定范围内的ID
+        ids_to_process = []
+        url_map = {}  # ID -> URL的映射
+
+        for id_value in range(range_start, range_end):
+            if id_value in url_batch_result and id_value not in processed_ids:
+                data = url_batch_result[id_value]
+                if data.get("status") == 200 and data.get("url"):
+                    ids_to_process.append(id_value)
+                    url_map[id_value] = data.get("url")
+
+        # 更新统计信息
+        total_ids = range_end - range_start
+        skipped_processed = len([id_value for id_value in processed_ids if range_start <= id_value < range_end])
+        skipped_no_url = total_ids - skipped_processed - len(ids_to_process)
+
+        self.stats = {
+            "total": total_ids,
+            "success": 0,
+            "failed": 0,
+            "skipped": skipped_processed + skipped_no_url,
+            "start_time": time.time(),
+            "end_time": 0
+        }
+
+        log_info(f"总ID数: {total_ids}, 已处理: {skipped_processed}, 无URL: {skipped_no_url}, 待处理: {len(ids_to_process)}")
+
+        # 如果没有需要处理的ID，直接返回
+        if not ids_to_process:
+            log_info("没有需要处理的ID，跳过批处理")
+            self.stats["end_time"] = time.time()
+            self.stats["total_time"] = self.stats["end_time"] - self.stats["start_time"]
+            self.stats["avg_time_per_item"] = 0
+            return self.stats
+
+        # 创建任务列表
+        tasks = []
+        for id_value in ids_to_process:
+            custom_url = url_map.get(id_value)
+            task = self._process_id_with_semaphore(
+                id_value,
+                output_dir,
+                save_image,
+                custom_url
+            )
+            tasks.append(task)
+
+        # 执行所有任务
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 统计结果
+        for result in results:
+            if isinstance(result, Exception):
+                self.stats["failed"] += 1
+                log_error(f"任务执行异常: {str(result)}")
+            else:
+                if result.get("success", False):
+                    self.stats["success"] += 1
+                else:
+                    self.stats["failed"] += 1
+
+        # 更新统计信息
+        self.stats["end_time"] = time.time()
+        self.stats["total_time"] = self.stats["end_time"] - self.stats["start_time"]
+        self.stats["avg_time_per_item"] = self.stats["total_time"] / len(ids_to_process) if ids_to_process else 0
+
+        log_info(f"ID范围处理完成。总计: {self.stats['total']}，成功: {self.stats['success']}，"
+                f"失败: {self.stats['failed']}，跳过: {self.stats['skipped']}，"
+                f"总耗时: {self.stats['total_time']:.2f}秒")
+
+        return self.stats
 
     async def process_batch_by_key(self, key: int,
                                   output_dir: Optional[str] = None,
@@ -429,13 +504,87 @@ class BatchProcessor:
         # 计算ID范围
         start_id = key * 100000
         end_id = (key + 1) * 100000
+        log_info(f"开始批量处理ID范围: {start_id} - {end_id}")
 
-        return await self.process_batch(
-            start_id=start_id,
-            end_id=end_id,
-            output_dir=output_dir,
-            save_image=save_image
-        )
+        # 获取已经处理过的ID
+        processed_ids = await self.danbooru_gemini_captions.get_processed_ids(start_id, end_id)
+        log_info(f"已处理的ID数量: {len(processed_ids)}")
+
+        # 使用check_urls_by_key方法获取URL信息，提高效率
+        log_info(f"使用check_urls_by_key获取ID范围 {start_id} - {end_id} 的URL信息")
+        url_batch_result = await self.danbooru_pics.check_urls_by_key(key)
+
+        # 找出需要处理的ID
+        ids_to_process = []
+        url_map = {}  # ID -> URL的映射
+
+        for id_value in range(start_id, end_id):
+            if id_value in url_batch_result and id_value not in processed_ids:
+                data = url_batch_result[id_value]
+                if data.get("status") == 200 and data.get("url"):
+                    ids_to_process.append(id_value)
+                    url_map[id_value] = data.get("url")
+
+        # 更新统计信息
+        total_ids = end_id - start_id
+        skipped_processed = len(processed_ids)
+        skipped_no_url = total_ids - skipped_processed - len(ids_to_process)
+
+        self.stats = {
+            "total": total_ids,
+            "success": 0,
+            "failed": 0,
+            "skipped": skipped_processed + skipped_no_url,
+            "start_time": time.time(),
+            "end_time": 0
+        }
+
+        log_info(f"总ID数: {total_ids}, 已处理: {skipped_processed}, 无URL: {skipped_no_url}, 待处理: {len(ids_to_process)}")
+
+        # 如果没有需要处理的ID，直接返回
+        if not ids_to_process:
+            log_info("没有需要处理的ID，跳过批处理")
+            self.stats["end_time"] = time.time()
+            self.stats["total_time"] = self.stats["end_time"] - self.stats["start_time"]
+            self.stats["avg_time_per_item"] = 0
+            return self.stats
+
+        # 创建任务列表
+        tasks = []
+        for id_value in ids_to_process:
+            custom_url = url_map.get(id_value)
+            task = self._process_id_with_semaphore(
+                id_value,
+                output_dir,
+                save_image,
+                custom_url
+            )
+            tasks.append(task)
+
+        # 执行所有任务
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 统计结果
+        for result in results:
+            if isinstance(result, Exception):
+                self.stats["failed"] += 1
+                log_error(f"任务执行异常: {str(result)}")
+            else:
+                if result.get("success", False):
+                    self.stats["success"] += 1
+                else:
+                    self.stats["failed"] += 1
+
+        # 更新统计信息
+        self.stats["end_time"] = time.time()
+        self.stats["total_time"] = self.stats["end_time"] - self.stats["start_time"]
+        self.stats["avg_time_per_item"] = self.stats["total_time"] / len(ids_to_process) if ids_to_process else 0
+
+        log_info(f"ID范围处理完成。总计: {self.stats['total']}，成功: {self.stats['success']}，"
+                f"失败: {self.stats['failed']}，跳过: {self.stats['skipped']}，"
+                f"总耗时: {self.stats['total_time']:.2f}秒")
+
+        return self.stats
 
     async def process_id_list(self, id_list: List[Union[str, int]],
                              output_dir: Optional[str] = None,

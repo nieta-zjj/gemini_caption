@@ -3,6 +3,8 @@ import time
 import httpx
 import asyncio
 import random
+import subprocess
+import tempfile
 from typing import Tuple, Optional, Dict, Any, Union
 from hfpics import HfPics
 
@@ -17,7 +19,8 @@ class ImageProcessor:
     def __init__(self,
                  hf_repo: str = "picollect/danbooru",
                  hf_cache_dir: Optional[str] = None,
-                 use_hfpics_first: bool = False):
+                 use_hfpics_first: bool = False,
+                 use_wget: bool = True):
         """
         初始化图片处理器
 
@@ -25,8 +28,10 @@ class ImageProcessor:
             hf_repo: HuggingFace仓库名称
             hf_cache_dir: HfPics缓存目录
             use_hfpics_first: 是否优先使用HfPics获取图片
+            use_wget: 是否优先使用系统wget工具下载图片
         """
         self.use_hfpics_first = use_hfpics_first
+        self.use_wget = use_wget
 
         # 初始化HFPics客户端
         if hf_cache_dir is None:
@@ -36,6 +41,10 @@ class ImageProcessor:
             self.hf_pics = HfPics(repo=hf_repo, cache_dir=hf_cache_dir)
         log_info(f"已初始化HFPics客户端，使用仓库: {hf_repo}")
 
+        # 检查wget是否可用
+        if self.use_wget:
+            self._check_wget_available()
+
         # 文件类型到MIME类型的映射
         self.mime_type_map = {
             "png": "image/png",
@@ -44,6 +53,18 @@ class ImageProcessor:
             "webp": "image/webp",
             "gif": "image/gif"
         }
+
+    def _check_wget_available(self):
+        """
+        检查系统中是否安装了wget工具
+        """
+        try:
+            # 使用subprocess检查wget命令是否可用
+            subprocess.run(["wget", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            log_info("wget工具可用，将优先使用wget下载图片")
+        except (subprocess.SubprocessError, FileNotFoundError):
+            log_warning("wget工具不可用，将使用httpx库下载图片")
+            self.use_wget = False
 
     def get_random_headers(self) -> Dict[str, str]:
         """
@@ -108,6 +129,76 @@ class ImageProcessor:
 
         return headers
 
+    async def download_with_wget(self, image_url: str) -> Optional[bytes]:
+        """
+        使用wget工具下载图片
+
+        Args:
+            image_url: 图片URL
+
+        Returns:
+            图片字节内容，下载失败则返回None
+        """
+        try:
+            # 创建临时文件用于保存下载内容
+            with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                temp_path = temp_file.name
+
+            # 生成随机的User-Agent
+            headers = self.get_random_headers()
+            user_agent = headers.get('User-Agent', '')
+            referer = headers.get('Referer', '')
+
+            # 构建wget命令
+            cmd = [
+                "wget",
+                "--quiet",  # 安静模式
+                "--tries=3",  # 重试3次
+                "--timeout=60",  # 超时时间60秒
+                "--user-agent=" + user_agent,
+                "--referer=" + referer,
+                "-O", temp_path,  # 输出到临时文件
+                image_url
+            ]
+
+            log_debug(f"使用wget下载图片，命令: {' '.join(cmd)}")
+
+            # 执行wget命令
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            # 等待命令执行完成
+            stdout, stderr = await process.communicate()
+
+            # 检查wget返回状态
+            if process.returncode != 0:
+                log_warning(f"wget下载失败，返回码: {process.returncode}, 错误: {stderr.decode().strip()}")
+                # 删除临时文件
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+                return None
+
+            # 读取下载的文件内容
+            with open(temp_path, 'rb') as f:
+                image_content = f.read()
+
+            # 删除临时文件
+            try:
+                os.unlink(temp_path)
+            except OSError as e:
+                log_warning(f"删除临时文件失败: {str(e)}")
+
+            return image_content
+
+        except Exception as e:
+            log_error(f"使用wget下载图片时出错: {str(e)}")
+            return None
+
     async def download_image(self, image_url: str, dan_id: Optional[int] = None) -> Tuple[Optional[bytes], str, str]:
         """
         下载图片
@@ -125,31 +216,43 @@ class ImageProcessor:
         file_extension = os.path.splitext(image_url)[1][1:].lower()
         mime_type = self.mime_type_map.get(file_extension, "image/jpeg")
 
-        # 重试间隔（秒）
-        retry_delays = [1, 5, 30, 60, 300]
         image_bytes = None
 
-        # 尝试获取图片内容
-        for attempt, delay in enumerate(retry_delays):
-            try:
-                # 每次请求生成新的随机请求头
-                headers = self.get_random_headers()
-                log_debug(f"正在获取图片内容... 尝试 {attempt + 1}/{len(retry_delays)}")
-                log_debug(f"使用User-Agent: {headers.get('User-Agent', '未知')}")
+        # 如果启用了wget，首先尝试使用wget下载
+        if self.use_wget:
+            log_debug("尝试使用wget下载图片...")
+            image_bytes = await self.download_with_wget(image_url)
+            if image_bytes:
+                log_info("使用wget成功下载图片")
+                return image_bytes, mime_type, file_extension
 
-                async with httpx.AsyncClient(timeout=60.0, headers=headers, follow_redirects=True) as client:
-                    response = await client.get(image_url)
-                    if response.status_code == 200:
-                        image_bytes = response.content
-                        break
-                    else:
-                        log_warning(f"获取失败，状态码: {response.status_code}")
-            except Exception as e:
-                log_error(f"获取图片时出错: {str(e)}")
+        # 如果wget下载失败或未启用wget，使用httpx下载
+        if not image_bytes:
+            log_debug("使用httpx下载图片...")
+            # 重试间隔（秒）
+            retry_delays = [1, 5, 30, 60, 300]
 
-            if attempt < len(retry_delays) - 1:  # 如果不是最后一次尝试
-                log_debug(f"等待 {delay} 秒后重试...")
-                await asyncio.sleep(delay)
+            # 尝试获取图片内容
+            for attempt, delay in enumerate(retry_delays):
+                try:
+                    # 每次请求生成新的随机请求头
+                    headers = self.get_random_headers()
+                    log_debug(f"正在获取图片内容... 尝试 {attempt + 1}/{len(retry_delays)}")
+                    log_debug(f"使用User-Agent: {headers.get('User-Agent', '未知')}")
+
+                    async with httpx.AsyncClient(timeout=60.0, headers=headers, follow_redirects=True) as client:
+                        response = await client.get(image_url)
+                        if response.status_code == 200:
+                            image_bytes = response.content
+                            break
+                        else:
+                            log_warning(f"获取失败，状态码: {response.status_code}")
+                except Exception as e:
+                    log_error(f"获取图片时出错: {str(e)}")
+
+                if attempt < len(retry_delays) - 1:  # 如果不是最后一次尝试
+                    log_debug(f"等待 {delay} 秒后重试...")
+                    await asyncio.sleep(delay)
 
         return image_bytes, mime_type, file_extension
 
