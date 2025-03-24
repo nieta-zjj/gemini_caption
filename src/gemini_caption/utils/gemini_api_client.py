@@ -151,48 +151,55 @@ class GeminiApiClient:
 
                 # 检查text是否为空
                 if not response.text:
-                    # 检查是否因为内容政策被拦截
-                    prohibited_content = False
-                    policy_violation_reason = ""
+                    # 其他空响应情况 - 先检查是否因为内容违规而导致空响应
+                    is_blocked_content = False
+                    block_reason_text = ""
 
+                    # 检查candidates中是否有内容违规标记
                     if hasattr(response, 'candidates') and response.candidates:
                         for i, candidate in enumerate(response.candidates):
                             if hasattr(candidate, 'finish_reason'):
                                 if candidate.finish_reason == types.FinishReason.PROHIBITED_CONTENT:
-                                    prohibited_content = True
-                                    policy_violation_reason = "PROHIBITED_CONTENT"
-                                    log_warning(f"[任务 {task_id}] 生成内容被安全过滤器拦截: {policy_violation_reason}")
+                                    is_blocked_content = True
+                                    block_reason_text = "PROHIBITED_CONTENT"
+                                    log_warning(f"[任务 {task_id}] 生成内容被安全过滤器拦截: {block_reason_text}")
                                 elif candidate.finish_reason == types.FinishReason.SAFETY:
-                                    prohibited_content = True
-                                    policy_violation_reason = "SAFETY"
-                                    log_warning(f"[任务 {task_id}] 生成内容被安全过滤器拦截: {policy_violation_reason}")
+                                    is_blocked_content = True
+                                    block_reason_text = "SAFETY"
+                                    log_warning(f"[任务 {task_id}] 生成内容被安全过滤器拦截: {block_reason_text}")
                                 elif candidate.finish_reason:
                                     log_debug(f"[任务 {task_id}] 响应候选项 {i} 完成原因: {candidate.finish_reason}")
 
                             if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
                                 log_debug(f"[任务 {task_id}] 响应候选项 {i} 安全评级: {candidate.safety_ratings}")
 
-                    if prohibited_content:
-                        # 对于内容政策违规，提供更具体的错误信息
-                        log_warning(f"[任务 {task_id}] API响应因内容政策违规被拦截: {repr(response)}，原因: {policy_violation_reason}")
+                    # 检查响应对象是否包含内容违规标记
+                    if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                        if hasattr(response.prompt_feedback, 'block_reason'):
+                            block_reason = response.prompt_feedback.block_reason
+                            block_reason_text = str(block_reason)
+                            if 'PROHIBITED_CONTENT' in block_reason_text or 'SAFETY' in block_reason_text:
+                                is_blocked_content = True
+                                log_warning(f"[任务 {task_id}] 检测到内容被安全过滤器拦截: {block_reason_text}")
 
-                        # 对于内容违规，直接返回结果，不再重试
+                    # 如果是内容违规导致的空响应，直接返回结果不重试
+                    if is_blocked_content:
                         processing_time = time.time() - start_time
-                        log_info(f"[任务 {task_id}] 检测到内容政策违规，不进行重试，直接返回结果。处理时间: {processing_time:.2f}秒")
+                        log_info(f"[任务 {task_id}] 检测到输入内容被安全过滤器拦截，不进行重试。处理时间: {processing_time:.2f}秒")
 
                         return {
                             "success": False,
-                            "error": f"内容政策违规被拦截: {policy_violation_reason}",
+                            "error": f"内容被安全过滤器拦截: {block_reason_text}",
                             "error_type": "ContentPolicyViolation",
                             "processing_time": processing_time,
                             "status_code": 999  # 特定状态码表示内容政策违规
                         }
-                    else:
-                        # 其他空响应情况
-                        last_error = Exception(f"API响应text为空: {repr(response)}")
-                        log_warning(f"[任务 {task_id}] API响应text为空，重试 {attempt+1}/{self.retry_attempts}，具体response信息: {repr(response)}") # 增加具体response信息
-                        self._delay_retry_sync(attempt)
-                        continue
+
+                    # 其他原因的空响应，进行重试
+                    last_error = Exception(f"API响应text为空: {repr(response)}")
+                    log_warning(f"[任务 {task_id}] API响应text为空，重试 {attempt+1}/{self.retry_attempts}，具体response信息: {repr(response)}") # 增加具体response信息
+                    self._delay_retry_sync(attempt)
+                    continue
 
                 # 提取响应文本
                 caption = response.text
