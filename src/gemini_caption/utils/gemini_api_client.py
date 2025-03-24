@@ -6,6 +6,7 @@ import json_repair
 from typing import Dict, Any, Optional, Union, List
 import random
 import traceback  # 添加traceback模块导入
+import google.auth.exceptions  # 添加OAuth认证错误模块
 
 # 导入日志工具
 from gemini_caption.utils.logger_utils import log_info, log_debug, log_warning, log_error
@@ -48,12 +49,19 @@ class GeminiApiClient:
         try:
             # 从区域列表中随机选择一个
             region = random.choice(self.regions)
+
+            # 注意: genai.Client不支持credentials_kwargs参数
+            # 使用环境变量GOOGLE_APPLICATION_CREDENTIALS来设置认证
+            # 或者直接在应用启动前配置所需的作用域
             self.genai_client = genai.Client(
                 vertexai=True,
                 project=self.project_id,
                 location=region
             )
             log_info(f"成功初始化Gemini客户端，使用模型: {self.model_id}，区域: {region}")
+
+            # 记录提示信息以帮助解决OAuth认证问题
+            log_info("如果遇到OAuth认证作用域问题，请确保环境中设置了GOOGLE_APPLICATION_CREDENTIALS环境变量，并且服务账号有正确的权限")
         except Exception as e:
             log_error(f"初始化Gemini客户端失败: {str(e)}")
             raise
@@ -84,6 +92,8 @@ class GeminiApiClient:
                     # 重新随机选择区域初始化客户端
                     region = random.choice(self.regions)
                     log_info(f"重试使用新区域: {region}")
+
+                    # 不使用credentials_kwargs参数
                     self.genai_client = genai.Client(
                         vertexai=True,
                         project=self.project_id,
@@ -183,6 +193,30 @@ class GeminiApiClient:
                 last_error = e
                 error_stack = traceback.format_exc()  # 获取完整错误栈
                 log_warning(f"网络错误，重试 {attempt+1}/{self.retry_attempts}\n错误详情: {str(e)}\n错误栈: {error_stack}")
+                await self._delay_retry(attempt)
+
+            except google.auth.exceptions.RefreshError as e:
+                # 处理OAuth认证错误
+                last_error = e
+                error_stack = traceback.format_exc()
+
+                # 检查是否是作用域问题
+                if 'invalid_scope' in str(e).lower():
+                    log_error(f"OAuth认证作用域错误，请检查服务账号权限: {str(e)}")
+                    log_error("解决方案: 1) 确保设置了GOOGLE_APPLICATION_CREDENTIALS环境变量; 2) 确保服务账号有正确的权限; 3) 检查服务账号密钥是否有效")
+
+                    # 尝试更新Google应用默认凭据
+                    try:
+                        import os
+                        creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+                        if creds_path:
+                            log_info(f"当前使用的凭据文件路径: {creds_path}")
+                        else:
+                            log_warning("未设置GOOGLE_APPLICATION_CREDENTIALS环境变量")
+                    except Exception as cred_err:
+                        log_warning(f"检查凭据信息时出错: {str(cred_err)}")
+
+                log_warning(f"认证错误，重试 {attempt+1}/{self.retry_attempts}\n错误详情: {str(e)}\n错误栈: {error_stack}")
                 await self._delay_retry(attempt)
 
             except Exception as e:

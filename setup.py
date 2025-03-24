@@ -10,7 +10,7 @@ setup(
     # 依赖项
     install_requires=[
         "json-repair",
-        "google-genai",
+        "google-genai>=1.7.0",
         "pymongo",
         "requests",
         "motor",
