@@ -2,6 +2,7 @@ import os
 import time
 import httpx
 import asyncio
+import random
 from typing import Tuple, Optional, Dict, Any, Union
 from hfpics import HfPics
 
@@ -44,6 +45,69 @@ class ImageProcessor:
             "gif": "image/gif"
         }
 
+    def get_random_headers(self) -> Dict[str, str]:
+        """
+        生成随机的浏览器请求头
+
+        Returns:
+            随机生成的请求头字典
+        """
+        # 随机选择浏览器和版本
+        browsers = [
+            # Chrome
+            {
+                "name": "Google Chrome",
+                "version_prefix": random.choice(["110", "111", "112", "113", "114", "115", "116", "120", "131", "132"]),
+                "chromium_version": random.choice(["110", "111", "112", "113", "114", "115", "116", "120", "131", "132"]),
+                "platform": random.choice(["Windows", "Macintosh", "X11"]),
+                "os_version": random.choice(["10.0", "11.0"]) if "Windows" else "Intel Mac OS X 10_15_7" if "Macintosh" else "Linux x86_64"
+            },
+            # Edge
+            {
+                "name": "Microsoft Edge",
+                "version_prefix": random.choice(["110", "111", "112", "113", "114", "115", "116", "120"]),
+                "chromium_version": random.choice(["110", "111", "112", "113", "114", "115", "116", "120"]),
+                "platform": random.choice(["Windows", "Macintosh", "X11"]),
+                "os_version": random.choice(["10.0", "11.0"]) if "Windows" else "Intel Mac OS X 10_15_7" if "Macintosh" else "Linux x86_64"
+            }
+        ]
+
+        selected_browser = random.choice(browsers)
+
+        # 构建版本号
+        minor_version = f"{random.randint(0, 9999)}.{random.randint(0, 99)}"
+        full_version = f"{selected_browser['version_prefix']}.0.{minor_version}"
+
+        # 生成对应平台的User-Agent
+        user_agent = ""
+        if selected_browser["platform"] == "Windows":
+            user_agent = f"Mozilla/5.0 (Windows NT {selected_browser['os_version']}; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{full_version} Safari/537.36"
+            # 添加浏览器特定标识
+            if selected_browser["name"] == "Microsoft Edge":
+                user_agent += f" Edg/{full_version}"
+        elif selected_browser["platform"] == "Macintosh":
+            user_agent = f"Mozilla/5.0 (Macintosh; {selected_browser['os_version']}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{full_version} Safari/537.36"
+            if selected_browser["name"] == "Microsoft Edge":
+                user_agent += f" Edg/{full_version}"
+        else:  # X11
+            user_agent = f"Mozilla/5.0 (X11; {selected_browser['os_version']}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{full_version} Safari/537.36"
+            if selected_browser["name"] == "Microsoft Edge":
+                user_agent += f" Edg/{full_version}"
+
+        # 生成sec-ch-ua
+        sec_ch_ua = f'"Not A(Brand";v="8", "Chromium";v="{selected_browser["chromium_version"]}", "{selected_browser["name"]}";v="{selected_browser["version_prefix"]}"'
+
+        # 只保留必要的请求头
+        headers = {
+            "User-Agent": user_agent,
+            "Referer": "https://danbooru.donmai.us/",
+            "sec-ch-ua": sec_ch_ua,
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": f'"{selected_browser["platform"]}"',
+        }
+
+        return headers
+
     async def download_image(self, image_url: str, dan_id: Optional[int] = None) -> Tuple[Optional[bytes], str, str]:
         """
         下载图片
@@ -68,8 +132,12 @@ class ImageProcessor:
         # 尝试获取图片内容
         for attempt, delay in enumerate(retry_delays):
             try:
+                # 每次请求生成新的随机请求头
+                headers = self.get_random_headers()
                 log_debug(f"正在获取图片内容... 尝试 {attempt + 1}/{len(retry_delays)}")
-                async with httpx.AsyncClient(timeout=60.0) as client:
+                log_debug(f"使用User-Agent: {headers.get('User-Agent', '未知')}")
+
+                async with httpx.AsyncClient(timeout=60.0, headers=headers, follow_redirects=True) as client:
                     response = await client.get(image_url)
                     if response.status_code == 200:
                         image_bytes = response.content
