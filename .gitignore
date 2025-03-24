@@ -25,6 +25,18 @@ ENV/
 
 # 输出目录
 caption_results/
+output/
+
+# 测试文件和目录
+*test*.py
+test_*.py
+*_test.py
+
+# 特定目录
+/src/test/
+/src/scrapy/
+/src/input_db/
+/src/output/
 
 # 其他
 .DS_Store

@@ -1,24 +1,14 @@
-from typing import List, Optional, Any, Dict, Union, Tuple
-import logging
+'''
+角色分析工具模块
 
-# 使用相对导入，确保作为包安装后能正确导入
-try:
-    # 当作为已安装的包导入时
-    from gemini_caption.danbooru_pics import DanbooruPics
-    from gemini_caption.danbooru_tags import DanbooruTags
-except ImportError:
-    try:
-        # 当在src目录中时
-        from .danbooru_pics import DanbooruPics
-        from .danbooru_tags import DanbooruTags
-    except ImportError:
-        # 直接导入，当在脚本所在目录运行时
-        from danbooru_pics import DanbooruPics
-        from danbooru_tags import DanbooruTags
+整合Danbooru图片和标签数据，提供角色分析和可视化功能。
+支持创建角色关系树、验证角色信息，并生成格式化的树结构描述。
+'''
 
-# 设置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+from typing import List, Optional, Any, Dict, Union
+
+from gemini_caption.utils.logger_utils import *
+from gemini_caption.mongo_collections import DanbooruPics, DanbooruTags
 
 class CharacterAnalyzer:
     """
@@ -50,9 +40,10 @@ class CharacterAnalyzer:
         Returns:
             角色验证结果字典
         """
-        character = await self.pics.get_pic_character_by_id(id)
-        main_series = await self.pics.get_pic_series_by_id(id)
-        main_general = await self.pics.get_pic_general_by_id(id)
+        pic_data = await self.pics.get_pic_data_by_id(id)
+        character = pic_data.character_tags
+        main_series = pic_data.copyright_tags
+        main_general = pic_data.general_tags
         char_dict = {}
 
         for char in character:

@@ -1,8 +1,21 @@
 """
+finished
+
 构建AI图像描述提示的工具。
 
 这个模块提供了生成用于AI图像描述的提示文本的功能。
 可以根据艺术家名称、角色名称、标签等参数自定义提示。
+
+build_prompt() 方法用于构建提示文本。
+    input:
+        artist_name: 艺术家名称列表
+        character_name: 角色名称列表
+        danbooru_tags: Danbooru标签列表
+        language: 语言代码，支持"en"或"zh"
+        character_reference_info: 角色参考信息
+
+    output:
+        prompt: 构建好的提示文本
 """
 
 from typing import List, Optional

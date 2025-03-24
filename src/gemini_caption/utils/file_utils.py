@@ -1,3 +1,10 @@
+'''
+文件处理工具模块
+
+提供图像文件路径处理和ID提取功能。
+支持多种命名模式下从图像文件路径中提取Danbooru图片ID。
+'''
+
 import os
 from typing import Optional
 
