@@ -5,7 +5,6 @@ finished
 '''
 
 from typing import List, Optional, Any, Dict, Union, Tuple, Set
-import logging
 import os
 import json
 import asyncio
@@ -13,11 +12,7 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, Asyn
 
 from gemini_caption.mongo_collections.danbooru_pics_model import DanbooruPicDoc
 from gemini_caption.mongo_collections.danbooru_gemini_captions import DanbooruGeminiCaptions
-
-# 设置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
+from gemini_caption.utils.logger_utils import log_info, log_debug, log_warning, log_error
 
 class DanbooruPics:
     def __init__(self, client_url: str = None,
@@ -76,9 +71,9 @@ class DanbooruPics:
                 self._client = AsyncIOMotorClient(self.client_url, **client_options)
                 self._db = self._client[self.db_name]
                 await self.gemini_captions.initialize()
-                logger.debug(f"MongoDB连接初始化成功: {self.db_name}")
+                log_debug(f"MongoDB连接初始化成功: {self.db_name}")
             except Exception as e:
-                logger.error(f"创建MongoDB客户端失败: {str(e)}")
+                log_error(f"创建MongoDB客户端失败: {str(e)}")
                 raise
         return self
 
@@ -87,7 +82,7 @@ class DanbooruPics:
         if self._client:
             self._client.close()
             self._client = None
-            logger.info(f"已关闭MongoDB客户端连接: {self.db_name}")
+            log_info(f"已关闭MongoDB客户端连接: {self.db_name}")
 
 
     async def get_pic_data_by_id(self, id: int, use_cache: bool = True) -> DanbooruPicDoc:
@@ -116,10 +111,10 @@ class DanbooruPics:
                     self.pics_db_cache[id] = doc
                 else:
                     # 未找到文档时，使用from_id方法创建默认对象
-                    logger.debug(f"未找到ID为 {id} 的图片")
+                    log_debug(f"未找到ID为 {id} 的图片")
                     return DanbooruPicDoc.from_id(id)
             except Exception as e:
-                logger.error(f"获取ID为 {id} 的图片时出错: {e}")
+                log_error(f"获取ID为 {id} 的图片时出错: {e}")
                 return DanbooruPicDoc.from_id(id)
         else:
             doc = self.pics_db_cache[id]
@@ -141,7 +136,7 @@ class DanbooruPics:
             return doc.url, doc.status
 
         except Exception as e:
-            logger.error(f"获取ID为 {post_id} 的URL时出错: {e}")
+            log_error(f"获取ID为 {post_id} 的URL时出错: {e}")
             return None, 500
 
 
@@ -178,7 +173,7 @@ class DanbooruPics:
                 self.pics_db_cache[post_id] = doc
 
         except Exception as e:
-            logger.error(f"构建缓存时出错: {e}")
+            log_error(f"构建缓存时出错: {e}")
 
 
     async def get_existing_ids(self, start: int, end: int, collection: str = "captions", gemini_db: str = "gemini_captions_danbooru") -> Set[int]:
@@ -201,7 +196,7 @@ class DanbooruPics:
             collection_prefix=collection
         )
 
-        logger.info(f"从gemini_captions_danbooru获取到已处理的ID: {len(existing_ids)}个")
+        log_info(f"从gemini_captions_danbooru获取到已处理的ID: {len(existing_ids)}个")
         return existing_ids
 
 
@@ -229,7 +224,7 @@ class DanbooruPics:
 
             return results
         except Exception as e:
-            logger.error(f"批量获取URL时出错: {e}")
+            log_error(f"批量获取URL时出错: {e}")
             return {post_id: {"url": None, "status": 500} for post_id in post_ids}
 
     async def check_urls_by_key(self, key: int, output_file: Optional[str] = None, batch_size: int = 10000) -> Dict[int, Dict[str, Any]]:
@@ -248,16 +243,16 @@ class DanbooruPics:
         start = key * 100000
         end = (key + 1) * 100000
 
-        logger.info(f"检查ID范围: {start} - {end}")
+        log_info(f"检查ID范围: {start} - {end}")
 
         # 清理缓存中范围外的数据，避免内存泄漏
         self.pics_db_cache = {k: v for k, v in self.pics_db_cache.items() if start <= k < end}
-        logger.info(f"清理缓存，保留 {len(self.pics_db_cache)} 条记录")
+        log_info(f"清理缓存，保留 {len(self.pics_db_cache)} 条记录")
 
         # 从数据库获取数据并构建缓存
         await self._build_cache(start, end)
         cache_size = len(self.pics_db_cache)
-        logger.info(f"从数据库获取到 {cache_size} 条记录")
+        log_info(f"从数据库获取到 {cache_size} 条记录")
 
         # 构建结果字典，分批处理以减少内存使用
         result = {}
@@ -271,7 +266,7 @@ class DanbooruPics:
             batch_end = min(batch_start + batch_size, end)
             batch_result = {}
 
-            logger.info(f"处理批次 {batch_index+1}/{total_batches}: ID {batch_start}-{batch_end-1}")
+            log_info(f"处理批次 {batch_index+1}/{total_batches}: ID {batch_start}-{batch_end-1}")
 
             for post_id in range(batch_start, batch_end):
                 # 从缓存中获取或创建默认文档
@@ -284,7 +279,7 @@ class DanbooruPics:
 
             # 更新总结果字典
             result.update(batch_result)
-            logger.info(f"批次 {batch_index+1} 处理完成，当前已处理 {len(result)} 个ID")
+            log_info(f"批次 {batch_index+1} 处理完成，当前已处理 {len(result)} 个ID")
 
             # 显示结果统计
             status_counts = {200: 0, 404: 0, 405: 0, 500: 0}
@@ -293,17 +288,17 @@ class DanbooruPics:
                 if status in status_counts:
                     status_counts[status] += 1
 
-            logger.info(f"结果统计: 总计 {len(result)} 个ID")
-            logger.info(f"  状态码 200 (ID和URL都存在): {status_counts[200]} 个")
-            logger.info(f"  状态码 404 (ID不存在): {status_counts[404]} 个")
-            logger.info(f"  状态码 405 (ID存在但URL不存在): {status_counts[405]} 个")
+            log_info(f"结果统计: 总计 {len(result)} 个ID")
+            log_info(f"  状态码 200 (ID和URL都存在): {status_counts[200]} 个")
+            log_info(f"  状态码 404 (ID不存在): {status_counts[404]} 个")
+            log_info(f"  状态码 405 (ID存在但URL不存在): {status_counts[405]} 个")
             if status_counts[500] > 0:
-                logger.info(f"  状态码 500 (处理错误): {status_counts[500]} 个")
+                log_info(f"  状态码 500 (处理错误): {status_counts[500]} 个")
 
         # 所有数据处理完成后，如果指定了输出文件，一次性保存所有结果
         if output_file:
             await self.save_results_to_file(result, output_file)
-            logger.info(f"所有结果已保存到文件: {output_file}")
+            log_info(f"所有结果已保存到文件: {output_file}")
 
         return result
 
@@ -328,10 +323,10 @@ class DanbooruPics:
                     json.dump(results, f, ensure_ascii=False, indent=2)
 
             await asyncio.to_thread(write_to_file)
-            logger.info(f"结果已保存到文件: {output_file}")
+            log_info(f"结果已保存到文件: {output_file}")
             return True
         except Exception as e:
-            logger.error(f"保存结果到文件失败: {str(e)}")
+            log_error(f"保存结果到文件失败: {str(e)}")
             return False
 
     async def update_results_file(self, output_file: str, new_results: Dict[int, Dict[str, Any]]) -> bool:
@@ -371,7 +366,7 @@ class DanbooruPics:
             await asyncio.to_thread(read_and_update)
             return True
         except Exception as e:
-            logger.error(f"更新结果文件失败: {str(e)}")
+            log_error(f"更新结果文件失败: {str(e)}")
             return False
 
     async def extract_character_stats(self, character: str) -> Tuple[List[str], Dict[str, Any]]:
@@ -398,5 +393,5 @@ class DanbooruPics:
             else:
                 return [], {}  # 返回空列表和空字典，保持返回类型一致
         except Exception as e:
-            logger.error(f"提取角色统计数据时出错: {e}")
+            log_error(f"提取角色统计数据时出错: {e}")
             return [], {}

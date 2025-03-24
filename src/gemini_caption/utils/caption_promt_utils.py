@@ -19,7 +19,7 @@ build_prompt() 方法用于构建提示文本。
 """
 
 from typing import List, Optional
-import logging
+from gemini_caption.utils.logger_utils import log_info, log_debug, log_warning, log_error
 
 
 class CaptionPromptUtils:
@@ -148,7 +148,7 @@ Your output must be a JSON object with the following structure:
 
         # 验证language参数
         if language not in ["en", "zh"]:
-            logging.warning(f"不支持的语言: {language}，将使用英语作为默认值")
+            log_warning(f"不支持的语言: {language}，将使用英语作为默认值")
             language = "en"
 
         # 选择基本模板

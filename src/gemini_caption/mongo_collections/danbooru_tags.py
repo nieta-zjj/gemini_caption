@@ -6,13 +6,9 @@ Danbooru标签操作模块
 '''
 
 import asyncio
-import logging
 import os
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
-
-# 设置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+from gemini_caption.utils.logger_utils import log_info, log_debug, log_warning, log_error
 
 
 class DanbooruTags:
@@ -31,9 +27,9 @@ class DanbooruTags:
             self.collection_name = collection
             self._client = None
             self._db = None
-            logger.debug("MongoDB连接初始化准备就绪")
+            log_debug("MongoDB连接初始化准备就绪")
         except Exception as e:
-            logger.error(f"MongoDB连接初始化失败: {e}")
+            log_error(f"MongoDB连接初始化失败: {e}")
             raise
 
     async def initialize(self):
@@ -48,9 +44,9 @@ class DanbooruTags:
 
                 self._client = AsyncIOMotorClient(self.mongodb_uri, **client_options)
                 self._db = self._client[self.db_name]
-                logger.debug("MongoDB连接初始化成功")
+                log_debug("MongoDB连接初始化成功")
             except Exception as e:
-                logger.error(f"创建MongoDB客户端失败: {str(e)}")
+                log_error(f"创建MongoDB客户端失败: {str(e)}")
                 raise
         return self
 
@@ -59,7 +55,7 @@ class DanbooruTags:
         if self._client:
             self._client.close()
             self._client = None
-            logger.info(f"已关闭MongoDB客户端连接: {self.db_name}")
+            log_info(f"已关闭MongoDB客户端连接: {self.db_name}")
 
     async def get_collection(self) -> AsyncIOMotorCollection:
         """获取集合实例"""
@@ -90,13 +86,13 @@ class DanbooruTags:
             parents_tag_data = await collection.find_one({"name": tag_name}, {"parents": 1, "_id": 1}) # 仅需要parents字段
 
             if not parents_tag_data:
-                logger.warning(f"标签不存在: {tag_name}")
+                log_warning(f"标签不存在: {tag_name}")
                 return False
 
             # 判断是否有父标签
             return len(parents_tag_data.get("parents", [])) == 0
         except Exception as e:
-            logger.error(f"判断根标签时出错: {e}")
+            log_error(f"判断根标签时出错: {e}")
             return False
 
     async def get_children_tags(self, tag_name):
@@ -121,13 +117,13 @@ class DanbooruTags:
             children_tag_data = await collection.find_one({"name": tag_name}, {"children": 1, "_id": 1}) # 仅需要children字段
 
             if not children_tag_data:
-                logger.warning(f"标签不存在: {tag_name}")
+                log_warning(f"标签不存在: {tag_name}")
                 return []
 
             # 直接返回子标签列表，因为children字段已经是字符串列表
             return children_tag_data.get("children", [])
         except Exception as e:
-            logger.error(f"获取子标签时出错: {e}")
+            log_error(f"获取子标签时出错: {e}")
             return []
 
     async def get_parent_tags(self, tag_name):
@@ -146,13 +142,13 @@ class DanbooruTags:
             parent_tag_data = await collection.find_one({"name": tag_name}, {"parents": 1, "_id": 1}) # 仅需要parents字段
 
             if not parent_tag_data:
-                logger.warning(f"标签不存在: {tag_name}")
+                log_warning(f"标签不存在: {tag_name}")
                 return []
 
             # 返回父标签名称列表
             return [parent.get("name") for parent in parent_tag_data.get("parents", []) if parent.get("name")]
         except Exception as e:
-            logger.error(f"获取父标签时出错: {e}")
+            log_error(f"获取父标签时出错: {e}")
             return []
 
 
@@ -178,11 +174,11 @@ class DanbooruTags:
             related_tag_data = await collection.find_one({"name": tag_name}, {"related": 1, "_id": 1}) # 仅需要related字段
 
             if not related_tag_data:
-                logger.warning(f"标签不存在: {tag_name}")
+                log_warning(f"标签不存在: {tag_name}")
                 return []
 
             # 直接返回相关标签列表
             return related_tag_data.get("related", [])
         except Exception as e:
-            logger.error(f"获取相关标签时出错: {e}")
+            log_error(f"获取相关标签时出错: {e}")
             return []

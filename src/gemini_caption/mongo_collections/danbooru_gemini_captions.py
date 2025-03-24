@@ -7,12 +7,8 @@ import json
 import time
 import asyncio
 from typing import Dict, Any, Optional, Union, List, Tuple, Set
-import logging
+from gemini_caption.utils.logger_utils import log_info, log_debug, log_warning, log_error
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
-
-# 设置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 class DanbooruGeminiCaptions:
     """
@@ -48,9 +44,9 @@ class DanbooruGeminiCaptions:
 
                 self._client = AsyncIOMotorClient(self.mongodb_uri, **client_options)
                 self._db = self._client[self.db_name]
-                logger.info(f"成功创建MongoDB客户端连接: {self.db_name}")
+                log_info(f"成功创建MongoDB客户端连接: {self.db_name}")
             except Exception as e:
-                logger.error(f"创建MongoDB客户端失败: {str(e)}")
+                log_error(f"创建MongoDB客户端失败: {str(e)}")
                 raise
         return self
 
@@ -59,7 +55,7 @@ class DanbooruGeminiCaptions:
         if self._client:
             self._client.close()
             self._client = None
-            logger.info(f"已关闭MongoDB客户端连接: {self.db_name}")
+            log_info(f"已关闭MongoDB客户端连接: {self.db_name}")
 
     async def get_collection(self, collection_name: str) -> AsyncIOMotorCollection:
         """获取指定的集合实例"""
@@ -83,7 +79,7 @@ class DanbooruGeminiCaptions:
             try:
                 id_value = int(id_value)
             except ValueError:
-                logger.warning(f"无法将ID转换为整数: {id_value}")
+                log_warning(f"无法将ID转换为整数: {id_value}")
                 return "default"
 
         # 计算集合名称
@@ -106,7 +102,7 @@ class DanbooruGeminiCaptions:
             if self._client is None:
                 await self.initialize()
 
-            logger.info(f"正在获取ID范围 {start}-{end} 内的现有ID")
+            log_info(f"正在获取ID范围 {start}-{end} 内的现有ID")
             result = set()
 
             # 计算涉及的集合范围
@@ -132,11 +128,11 @@ class DanbooruGeminiCaptions:
                 async for doc in cursor:
                     result.add(doc["_id"])
 
-            logger.info(f"共找到 {len(result)} 个ID")
+            log_info(f"共找到 {len(result)} 个ID")
             return result
 
         except Exception as e:
-            logger.error(f"获取现有ID列表时出错: {str(e)}")
+            log_error(f"获取现有ID列表时出错: {str(e)}")
             return set()
 
     async def get_processed_ids(self, start_id: int, end_id: int) -> Set[int]:
@@ -152,7 +148,7 @@ class DanbooruGeminiCaptions:
         """
         processed_ids = set()
         try:
-            logger.info(f"正在获取已处理ID列表: {start_id}-{end_id}")
+            log_info(f"正在获取已处理ID列表: {start_id}-{end_id}")
 
             # 按集合分组处理，避免每个ID单独查询
             collection_range = range(start_id // 100000, (end_id // 100000) + 1)
@@ -178,11 +174,11 @@ class DanbooruGeminiCaptions:
                 async for doc in cursor:
                     processed_ids.add(doc["_id"])
 
-            logger.info(f"共找到 {len(processed_ids)} 个已处理ID")
+            log_info(f"共找到 {len(processed_ids)} 个已处理ID")
             return processed_ids
 
         except Exception as e:
-            logger.error(f"获取已处理ID列表时出错: {str(e)}")
+            log_error(f"获取已处理ID列表时出错: {str(e)}")
             return processed_ids
 
     async def check_existing_result(self, dan_id: Union[str, int]) -> Optional[Dict[str, Any]]:
@@ -212,12 +208,12 @@ class DanbooruGeminiCaptions:
             result = await collection.find_one({"_id": dan_id})
 
             if result and result.get("success", False):
-                logger.debug(f"找到已存在的处理结果: ID {dan_id}")
+                log_debug(f"找到已存在的处理结果: ID {dan_id}")
                 return result
 
             return None
         except Exception as e:
-            logger.error(f"检查已有结果时出错: {str(e)}")
+            log_error(f"检查已有结果时出错: {str(e)}")
             return None
 
     async def save_caption_result(self, dan_id: Union[str, int], result: Dict[str, Any]) -> bool:
@@ -258,10 +254,10 @@ class DanbooruGeminiCaptions:
                 upsert=True
             )
 
-            logger.debug(f"结果已保存到MongoDB，ID: {dan_id}，集合: {collection_name}")
+            log_debug(f"结果已保存到MongoDB，ID: {dan_id}，集合: {collection_name}")
             return True
         except Exception as e:
-            logger.error(f"保存到MongoDB失败: {str(e)}")
+            log_error(f"保存到MongoDB失败: {str(e)}")
             return False
 
     async def save_result_to_file(self, dan_id: Union[str, int], result: Dict[str, Any], output_dir: str) -> bool:
@@ -287,8 +283,8 @@ class DanbooruGeminiCaptions:
             with open(result_path, 'w', encoding='utf-8') as f:
                 json.dump(result, f, ensure_ascii=False, indent=2)
 
-            logger.debug(f"结果已保存到文件: {result_path}")
+            log_debug(f"结果已保存到文件: {result_path}")
             return True
         except Exception as e:
-            logger.error(f"保存结果到文件失败: {str(e)}")
+            log_error(f"保存结果到文件失败: {str(e)}")
             return False

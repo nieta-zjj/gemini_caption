@@ -149,13 +149,13 @@ class ImageProcessor:
             user_agent = headers.get('User-Agent', '')
             referer = headers.get('Referer', '')
 
-            # 构建wget命令
+            # 构建wget命令，确保特殊字符被正确处理
             cmd = [
                 "wget",
                 "--quiet",  # 安静模式
                 "--tries=3",  # 重试3次
                 "--timeout=60",  # 超时时间60秒
-                "--user-agent=" + user_agent,
+                # "--user-agent=" + user_agent,
                 "--referer=" + referer,
                 "-O", temp_path,  # 输出到临时文件
                 image_url
@@ -175,13 +175,40 @@ class ImageProcessor:
 
             # 检查wget返回状态
             if process.returncode != 0:
-                log_warning(f"wget下载失败，返回码: {process.returncode}, 错误: {stderr.decode().strip()}")
-                # 删除临时文件
-                try:
-                    os.unlink(temp_path)
-                except OSError:
-                    pass
-                return None
+                error_msg = stderr.decode().strip() if stderr else "未知错误"
+                log_warning(f"wget下载失败，返回码: {process.returncode}, 错误: {error_msg}")
+
+                # 对于特定错误，尝试使用替代方法
+                if process.returncode == 8:  # 系统错误，可能是命令语法问题
+                    log_debug("检测到可能是命令语法问题，尝试使用Python直接调用wget进程")
+
+                    # 使用shell=True模式运行wget，以避免参数转义问题
+                    temp_cmd = f'wget --quiet --tries=3 --timeout=60 --output-document="{temp_path}" "{image_url}"'
+                    log_debug(f"尝试简化命令: {temp_cmd}")
+
+                    process = await asyncio.create_subprocess_shell(
+                        temp_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+
+                    stdout, stderr = await process.communicate()
+
+                    if process.returncode != 0:
+                        log_warning(f"简化wget命令也失败了，返回码: {process.returncode}, 错误: {stderr.decode().strip() if stderr else '未知错误'}")
+                        # 删除临时文件
+                        try:
+                            os.unlink(temp_path)
+                        except OSError:
+                            pass
+                        return None
+                else:
+                    # 删除临时文件
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
+                    return None
 
             # 读取下载的文件内容
             with open(temp_path, 'rb') as f:

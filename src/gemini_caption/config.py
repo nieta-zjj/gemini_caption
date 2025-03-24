@@ -5,7 +5,7 @@
 支持从环境变量加载配置，并处理Google应用凭证。
 '''
 import os
-import logging
+from gemini_caption.utils.logger_utils import log_info, log_debug, log_warning, log_error
 from typing import Optional, Dict, Any
 
 class Config:
@@ -56,27 +56,27 @@ class Config:
                 credentials_dir = os.path.dirname(self.GOOGLE_APPLICATION_CREDENTIALS)
                 if credentials_dir and not os.path.exists(credentials_dir):
                     os.makedirs(credentials_dir, exist_ok=True)
-                    logging.info(f"已创建凭证目录: {credentials_dir}")
+                    log_info(f"已创建凭证目录: {credentials_dir}")
 
                 # 写入凭证内容到文件
                 with open(self.GOOGLE_APPLICATION_CREDENTIALS, "w") as f:
                     f.write(self.GOOGLE_APPLICATION_CREDENTIALS_CONTENT)
-                logging.info(f"已将凭证内容写入到 {self.GOOGLE_APPLICATION_CREDENTIALS}")
+                log_info(f"已将凭证内容写入到 {self.GOOGLE_APPLICATION_CREDENTIALS}")
             except PermissionError as e:
-                logging.error(f"写入凭证文件时权限错误: {str(e)}")
-                logging.error("请确保应用具有写入指定目录的权限")
+                log_error(f"写入凭证文件时权限错误: {str(e)}")
+                log_error("请确保应用具有写入指定目录的权限")
                 raise
             except Exception as e:
-                logging.error(f"写入凭证文件时出错: {str(e)}")
+                log_error(f"写入凭证文件时出错: {str(e)}")
                 raise
 
         else:
             # 检查是否存在文件且有内容
             if os.path.exists(self.GOOGLE_APPLICATION_CREDENTIALS):
                 if os.path.getsize(self.GOOGLE_APPLICATION_CREDENTIALS) > 0:
-                    logging.info(f"已找到凭证文件 {self.GOOGLE_APPLICATION_CREDENTIALS}")
+                    log_info(f"已找到凭证文件 {self.GOOGLE_APPLICATION_CREDENTIALS}")
                 else:
-                    logging.warning(f"凭证文件存在但为空: {self.GOOGLE_APPLICATION_CREDENTIALS}")
+                    log_warning(f"凭证文件存在但为空: {self.GOOGLE_APPLICATION_CREDENTIALS}")
                     raise ValueError("凭证文件为空")
             else:
                 raise ValueError(f"凭证文件不存在: {self.GOOGLE_APPLICATION_CREDENTIALS}，且GOOGLE_APPLICATION_CREDENTIALS_CONTENT为空")
@@ -105,9 +105,9 @@ class Config:
         for key, value in kwargs.items():
             if hasattr(instance, key):
                 setattr(instance, key, value)
-                logging.info(f"已更新配置项 {key}: {value}")
+                log_info(f"已更新配置项 {key}: {value}")
             else:
-                logging.warning(f"未知配置项: {key}")
+                log_warning(f"未知配置项: {key}")
 
         return instance
 
