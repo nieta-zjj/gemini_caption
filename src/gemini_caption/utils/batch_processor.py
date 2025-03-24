@@ -79,6 +79,20 @@ class BatchProcessor:
         self.danbooru_pics = DanbooruPics(client_url=mongodb_uri)
         self.danbooru_gemini_captions = DanbooruGeminiCaptions(mongodb_uri=mongodb_uri)
 
+        # 数据库连接初始化标志
+        self._db_initialized = False
+
+        # 初始化角色分析器（如果可用）
+        self.character_analyzer = None
+        if CharacterAnalyzer is not None:
+            try:
+                self.character_analyzer = CharacterAnalyzer(client_url=mongodb_uri)
+                log_info("角色分析器初始化成功")
+            except Exception as e:
+                log_warning(f"角色分析器初始化失败: {str(e)}")
+        else:
+            log_debug("角色分析器模块未导入，跳过初始化")
+
         # 用于控制并发的信号量
         self.semaphore = asyncio.Semaphore(max_concurrency)
 
@@ -96,11 +110,52 @@ class BatchProcessor:
 
         log_info(f"批处理器初始化完成，最大并发数: {max_concurrency}")
 
+    async def initialize_db_connections(self):
+        """初始化所有数据库连接，确保只执行一次"""
+        if not self._db_initialized:
+            log_info("开始初始化数据库连接...")
+            # 初始化 DanbooruPics
+            if hasattr(self.danbooru_pics, 'initialize'):
+                await self.danbooru_pics.initialize()
+
+            # 初始化 DanbooruGeminiCaptions
+            await self.danbooru_gemini_captions.initialize()
+
+            # 初始化角色分析器的数据库连接
+            if self.character_analyzer and hasattr(self.character_analyzer, 'initialize'):
+                await self.character_analyzer.initialize()
+            elif self.character_analyzer and hasattr(self.character_analyzer.tags, 'initialize'):
+                await self.character_analyzer.tags.initialize()
+
+            self._db_initialized = True
+            log_info("所有数据库连接初始化完成")
+
     async def close(self):
         """关闭所有资源"""
         log_info("正在关闭批处理器资源...")
-        self.danbooru_pics.close()
+
+        # 关闭 DanbooruPics
+        if hasattr(self.danbooru_pics, 'close'):
+            self.danbooru_pics.close()
+
+        # 关闭 DanbooruGeminiCaptions
         await self.danbooru_gemini_captions.close()
+
+        # 关闭角色分析器
+        if self.character_analyzer:
+            try:
+                # 如果角色分析器有关闭方法，调用它
+                if hasattr(self.character_analyzer, 'close'):
+                    await self.character_analyzer.close()
+                # 关闭角色分析器内部组件
+                elif hasattr(self.character_analyzer, 'tags') and hasattr(self.character_analyzer.tags, 'close'):
+                    await self.character_analyzer.tags.close()
+                if hasattr(self.character_analyzer, 'pics') and hasattr(self.character_analyzer.pics, 'close'):
+                    self.character_analyzer.pics.close()
+                log_info("角色分析器资源已关闭")
+            except Exception as e:
+                log_warning(f"关闭角色分析器时出错: {str(e)}")
+
         log_info("批处理器资源已关闭")
 
     async def process_single_id(self, dan_id: Union[str, int],
@@ -121,6 +176,9 @@ class BatchProcessor:
         Returns:
             处理结果字典
         """
+        # 确保数据库连接已初始化
+        await self.initialize_db_connections()
+
         start_time = time.time()
 
         # 确保ID是整数
@@ -199,10 +257,9 @@ class BatchProcessor:
 
         # 获取角色参考信息（如果有CharacterAnalyzer）
         character_reference_info = None
-        if CharacterAnalyzer is not None:
+        if self.character_analyzer:
             try:
-                analyzer = CharacterAnalyzer(client_url=self.mongodb_uri)
-                character_reference_info = await analyzer.get_visualize_tree_by_pid(dan_id, self.language)
+                character_reference_info = await self.character_analyzer.get_visualize_tree_by_pid(dan_id, self.language)
             except Exception as e:
                 log_debug(f"无法获取角色参考信息: {str(e)}")
         else:
@@ -309,6 +366,9 @@ class BatchProcessor:
         Returns:
             处理结果统计
         """
+        # 确保数据库连接已初始化
+        await self.initialize_db_connections()
+
         log_info(f"开始批量处理ID范围: {start_id} - {end_id}")
 
         # 获取已经处理过的ID
@@ -418,6 +478,9 @@ class BatchProcessor:
         Returns:
             处理结果统计
         """
+        # 确保数据库连接已初始化
+        await self.initialize_db_connections()
+
         # 计算ID范围
         base_id = key * 100000
         range_start = base_id + start_id if start_id is not None else base_id
@@ -519,6 +582,9 @@ class BatchProcessor:
         Returns:
             处理结果统计
         """
+        # 确保数据库连接已初始化
+        await self.initialize_db_connections()
+
         # 计算ID范围
         start_id = key * 100000
         end_id = (key + 1) * 100000

@@ -85,6 +85,8 @@ class GeminiBatchCaption:
                 project_id=self.project_id
             )
             log_info("GeminiBatchCaption初始化完成")
+            log_info(f"使用多线程并发优化版本，最大并发数: {self.max_concurrency}")
+            log_info("Gemini API调用将使用独立线程并行执行，提高处理效率")
             return self
         except Exception as e:
             log_error(f"初始化失败: {str(e)}")
@@ -234,6 +236,8 @@ async def run_batch_with_args(key: Optional[int] = None,
 
     try:
         log_info(f"开始批处理任务")
+        log_info(f"使用多线程并发模式处理Gemini API调用，每个API请求将在独立线程中执行")
+        log_info(f"并发优化将显著提高批量处理效率，尤其是在处理大量图片时")
 
         # 初始化批处理器
         batch_captioner = await GeminiBatchCaption(

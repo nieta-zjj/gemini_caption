@@ -31,9 +31,13 @@ class DanbooruGeminiCaptions:
         self.db_name = db_name
         self._client = None
         self._db = None
+        self._initialized = False  # 添加初始化标志
 
     async def initialize(self):
         """异步初始化MongoDB连接"""
+        if self._initialized:  # 检查是否已经初始化
+            return self
+
         if self._client is None:
             try:
                 # 设置客户端选项，启用压缩以减少网络流量
@@ -44,6 +48,7 @@ class DanbooruGeminiCaptions:
 
                 self._client = AsyncIOMotorClient(self.mongodb_uri, **client_options)
                 self._db = self._client[self.db_name]
+                self._initialized = True  # 设置初始化标志
                 log_info(f"成功创建MongoDB客户端连接: {self.db_name}")
             except Exception as e:
                 log_error(f"创建MongoDB客户端失败: {str(e)}")
