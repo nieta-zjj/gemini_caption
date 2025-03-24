@@ -169,7 +169,7 @@ class DanbooruPics:
 
             # 执行查询
             # 优化：使用批量游标处理大量数据
-            cursor = pics_collection.find(query).batch_size(1000)
+            cursor = pics_collection.find(query).batch_size(10000)
 
             async for doc_dict in cursor:
                 post_id = doc_dict["_id"]
