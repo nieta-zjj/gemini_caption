@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, Union, List
 import random
 import traceback  # 添加traceback模块导入
 import google.auth.exceptions  # 添加OAuth认证错误模块
+import google.genai.errors  # 添加Gemini API错误模块
 import asyncio
 import uuid  # 添加uuid模块导入
 
@@ -189,7 +190,7 @@ class GeminiApiClient:
                     else:
                         # 其他空响应情况
                         last_error = Exception(f"API响应text为空: {repr(response)}")
-                        log_warning(f"[任务 {task_id}] API响应text为空，重试 {attempt+1}/{self.retry_attempts}")
+                        log_warning(f"[任务 {task_id}] API响应text为空，重试 {attempt+1}/{self.retry_attempts}，具体response信息: {repr(response)}") # 增加具体response信息
                         self._delay_retry_sync(attempt)
                         continue
 
@@ -204,6 +205,29 @@ class GeminiApiClient:
                 error_stack = traceback.format_exc()  # 获取完整错误栈
                 log_warning(f"[任务 {task_id}] 网络错误，重试 {attempt+1}/{self.retry_attempts}\n错误详情: {str(e)}\n错误栈: {error_stack}")
                 self._delay_retry_sync(attempt)
+
+            except google.genai.errors.ClientError as e:
+                # 检查是否是无效图像错误
+                if "400 INVALID_ARGUMENT" in str(e) and "Provided image is not valid" in str(e):
+                    # 无效图像错误，不需要重试
+                    last_error = e
+                    processing_time = time.time() - start_time
+                    log_warning(f"[任务 {task_id}] 检测到无效图像错误，不进行重试")
+
+                    return {
+                        "success": False,
+                        "error": "无效图像格式",
+                        "error_type": "InvalidImageError",
+                        "error_details": str(e),
+                        "processing_time": processing_time,
+                        "status_code": 998  # 特定状态码表示无效图像
+                    }
+                else:
+                    # 其他类型的ClientError，可能需要重试
+                    last_error = e
+                    error_stack = traceback.format_exc()
+                    log_warning(f"[任务 {task_id}] API客户端错误，重试 {attempt+1}/{self.retry_attempts}\n错误类型: {type(e).__name__}\n错误详情: {str(e)}\n错误栈: {error_stack}")
+                    self._delay_retry_sync(attempt)
 
             except google.auth.exceptions.RefreshError as e:
                 # 处理OAuth认证错误
