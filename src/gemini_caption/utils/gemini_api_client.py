@@ -95,7 +95,7 @@ class GeminiApiClient:
         if task_id is None:
             task_id = str(uuid.uuid4())[:8]  # 生成简短的任务ID
 
-        log_info(f"[任务 {task_id}] 开始同步调用Gemini API...")
+        log_debug(f"[任务 {task_id}] 开始同步调用Gemini API...")
 
         caption = None
         last_error = None
@@ -108,7 +108,7 @@ class GeminiApiClient:
                 if attempt > 0:
                     # 如果不是第一次尝试，则重新创建客户端
                     client = self._create_new_client()
-                    log_info(f"[任务 {task_id}] 重试使用新客户端，尝试次数 {attempt+1}/{self.retry_attempts}")
+                    log_debug(f"[任务 {task_id}] 重试使用新客户端，尝试次数 {attempt+1}/{self.retry_attempts}")
 
                 # 调用API
                 response = client.models.generate_content(
@@ -320,7 +320,7 @@ class GeminiApiClient:
         # 生成任务ID
         task_id = str(uuid.uuid4())[:8]
 
-        log_info(f"[任务 {task_id}] 使用线程池异步调用Gemini API...")
+        log_debug(f"[任务 {task_id}] 使用线程池异步调用Gemini API...")
 
         # 使用asyncio.to_thread将同步函数转为异步执行
         try:

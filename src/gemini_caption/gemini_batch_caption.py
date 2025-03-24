@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any, Union, List
 import time
 
 # 导入自定义模块
-from gemini_caption.utils.logger_utils import log_info, log_debug, log_warning, log_error, LoggerUtils
+from gemini_caption.utils.logger_utils import log_info, log_debug, log_warning, log_error, logger_utils
 from gemini_caption.utils.batch_processor import BatchProcessor
 from gemini_caption.config import Config
 
@@ -61,9 +61,9 @@ class GeminiBatchCaption:
 
         # 设置日志级别
         log_level = log_level or config.LOG_LEVEL
-        LoggerUtils.set_log_level(log_level)
+        logger_utils.set_log_level(log_level)
         if config.LOG_FILE:
-            LoggerUtils.setup_file_handler(config.LOG_FILE)
+            logger_utils.setup_file_handler(config.LOG_FILE)
 
         log_info(f"初始化GeminiBatchCaption，并发数: {self.max_concurrency}，语言: {self.language}")
 
@@ -85,8 +85,6 @@ class GeminiBatchCaption:
                 project_id=self.project_id
             )
             log_info("GeminiBatchCaption初始化完成")
-            log_info(f"使用多线程并发优化版本，最大并发数: {self.max_concurrency}")
-            log_info("Gemini API调用将使用独立线程并行执行，提高处理效率")
             return self
         except Exception as e:
             log_error(f"初始化失败: {str(e)}")
@@ -220,11 +218,11 @@ async def run_batch_with_args(key: Optional[int] = None,
     # 设置日志
     config = Config.get_config()
     log_level = log_level or config.LOG_LEVEL
-    LoggerUtils.set_log_level(log_level)
+    logger_utils.set_log_level(log_level)
     if log_file:
-        LoggerUtils.setup_file_handler(log_file)
+        logger_utils.setup_file_handler(log_file)
     elif config.LOG_FILE:
-        LoggerUtils.setup_file_handler(config.LOG_FILE)
+        logger_utils.setup_file_handler(config.LOG_FILE)
 
     # 准备输出目录
     if output_dir:
@@ -236,8 +234,6 @@ async def run_batch_with_args(key: Optional[int] = None,
 
     try:
         log_info(f"开始批处理任务")
-        log_info(f"使用多线程并发模式处理Gemini API调用，每个API请求将在独立线程中执行")
-        log_info(f"并发优化将显著提高批量处理效率，尤其是在处理大量图片时")
 
         # 初始化批处理器
         batch_captioner = await GeminiBatchCaption(

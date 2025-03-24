@@ -391,7 +391,7 @@ class BatchProcessor:
             if not id_batch:
                 continue
 
-            log_info(f"获取ID批次 {batch_start} - {batch_end - 1} 的URL信息")
+            log_debug(f"获取ID批次 {batch_start} - {batch_end - 1} 的URL信息")
             url_batch_result = await self.danbooru_pics.check_url_by_id_batch(id_batch)
 
             for id_value in id_batch:
@@ -415,7 +415,7 @@ class BatchProcessor:
             "end_time": 0
         }
 
-        log_info(f"总ID数: {total_ids}, 已处理: {skipped_processed}, 无URL: {skipped_no_url}, 待处理: {len(ids_to_process)}")
+        log_debug(f"总ID数: {total_ids}, 已处理: {skipped_processed}, 无URL: {skipped_no_url}, 待处理: {len(ids_to_process)}")
 
         # 如果没有需要处理的ID，直接返回
         if not ids_to_process:
@@ -493,7 +493,7 @@ class BatchProcessor:
         log_info(f"已处理的ID数量: {len(processed_ids)}")
 
         # 使用check_urls_by_key方法获取URL信息，提高效率
-        log_info(f"使用check_urls_by_key获取ID范围 {base_id} - {base_id + 100000} 的URL信息")
+        log_debug(f"使用check_urls_by_key获取ID范围 {base_id} - {base_id + 100000} 的URL信息")
         url_batch_result = await self.danbooru_pics.check_urls_by_key(key)
 
         # 找出需要处理的ID，但只考虑指定范围内的ID
@@ -595,7 +595,7 @@ class BatchProcessor:
         log_info(f"已处理的ID数量: {len(processed_ids)}")
 
         # 使用check_urls_by_key方法获取URL信息，提高效率
-        log_info(f"使用check_urls_by_key获取ID范围 {start_id} - {end_id} 的URL信息")
+        log_debug(f"使用check_urls_by_key获取ID范围 {start_id} - {end_id} 的URL信息")
         url_batch_result = await self.danbooru_pics.check_urls_by_key(key)
 
         # 找出需要处理的ID
@@ -713,7 +713,7 @@ class BatchProcessor:
         log_info(f"已处理的ID数量: {len(processed_ids)}")
 
         # 获取URL信息
-        log_info(f"获取ID列表的URL信息")
+        log_debug(f"获取ID列表的URL信息")
         url_batch_result = await self.danbooru_pics.check_url_by_id_batch(int_id_list)
 
         # 找出需要处理的ID

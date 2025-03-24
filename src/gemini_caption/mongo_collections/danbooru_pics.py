@@ -261,6 +261,7 @@ class DanbooruPics:
         total_ids = end - start
         total_batches = (total_ids + batch_size - 1) // batch_size
 
+        # 处理每个批次
         for batch_index in range(total_batches):
             batch_start = start + batch_index * batch_size
             batch_end = min(batch_start + batch_size, end)

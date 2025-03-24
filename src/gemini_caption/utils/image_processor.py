@@ -237,7 +237,7 @@ class ImageProcessor:
         Returns:
             图片字节内容、MIME类型和文件扩展名的元组
         """
-        log_info(f"开始下载图片: {image_url}" + (f", ID: {dan_id}" if dan_id else ""))
+        log_debug(f"开始下载图片: {image_url}" + (f", ID: {dan_id}" if dan_id else ""))
 
         # 获取文件的MIME类型和扩展名
         file_extension = os.path.splitext(image_url)[1][1:].lower()
@@ -250,7 +250,7 @@ class ImageProcessor:
             log_debug("尝试使用wget下载图片...")
             image_bytes = await self.download_with_wget(image_url)
             if image_bytes:
-                log_info("使用wget成功下载图片")
+                log_debug("使用wget成功下载图片")
                 return image_bytes, mime_type, file_extension
 
         # 如果wget下载失败或未启用wget，使用httpx下载
@@ -264,22 +264,25 @@ class ImageProcessor:
                 try:
                     # 每次请求生成新的随机请求头
                     headers = self.get_random_headers()
-                    log_debug(f"正在获取图片内容... 尝试 {attempt + 1}/{len(retry_delays)}")
-                    log_debug(f"使用User-Agent: {headers.get('User-Agent', '未知')}")
 
-                    async with httpx.AsyncClient(timeout=60.0, headers=headers, follow_redirects=True) as client:
+                    async with httpx.AsyncClient(timeout=60.0, headers=headers) as client:
                         response = await client.get(image_url)
                         if response.status_code == 200:
                             image_bytes = response.content
+                            log_debug("使用httpx成功下载图片")
                             break
                         else:
-                            log_warning(f"获取失败，状态码: {response.status_code}")
+                            log_warning(f"下载图片失败，状态码: {response.status_code}，重试中...")
                 except Exception as e:
-                    log_error(f"获取图片时出错: {str(e)}")
+                    log_warning(f"下载图片异常: {str(e)}，重试中...")
 
-                if attempt < len(retry_delays) - 1:  # 如果不是最后一次尝试
-                    log_debug(f"等待 {delay} 秒后重试...")
-                    await asyncio.sleep(delay)
+                # 如果没有更多的重试次数，则退出
+                if attempt == len(retry_delays) - 1:
+                    break
+
+                # 等待指定的延迟后再重试
+                log_debug(f"等待 {delay} 秒后重试...")
+                await asyncio.sleep(delay)
 
         return image_bytes, mime_type, file_extension
 
@@ -296,7 +299,7 @@ class ImageProcessor:
         try:
             # 确保ID是整数
             dan_id = int(dan_id)
-            log_info(f"尝试从HFPics获取图片ID: {dan_id}")
+            log_debug(f"尝试从HFPics获取图片ID: {dan_id}")
 
             # 获取图片内容
             image_bytes = self.hf_pics.pic(dan_id, return_type="content")
@@ -305,7 +308,7 @@ class ImageProcessor:
                 log_warning(f"从HFPics获取图片ID {dan_id} 失败，返回为空")
                 return None, None, None
 
-            log_info(f"成功从HFPics获取图片ID: {dan_id}")
+            log_debug(f"成功从HFPics获取图片ID: {dan_id}")
 
             # 尝试获取图片扩展名和MIME类型
             try:
