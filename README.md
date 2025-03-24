@@ -1,99 +1,119 @@
-# Gemini Caption Generator
+# Gemini Caption
 
-使用Google Gemini API为Danbooru图像生成描述的工具。支持单张图像处理和批量并行处理。
+Gemini Caption是一个使用Google Gemini API对图像进行批量描述的工具，特别适合处理Danbooru图片集。该工具支持多种图像获取方式，提供了灵活的批处理选项，并能够与MongoDB数据库集成以存储描述结果。
 
-## 功能特点
+## 安装
 
-- 使用Google Gemini API进行高质量图像描述生成
-- 支持单张图像和批量处理
-- 异步并行处理，大幅提高效率
-- 自动将结果保存到MongoDB数据库
-- 智能跳过已处理的图像，避免重复
-- 完善的错误处理和重试机制
-- 高效的URL预处理机制，一次性获取批量URL信息
-- 按键值(key)批量处理，减少数据库查询次数，提高性能
-- 面向对象的模块化设计，易于扩展和维护
-
-## 安装方法
+### 使用pip安装
 
 ```bash
-# 从本地安装
-pip install .
-
-# 或直接从GitHub安装
 pip install git+https://github.com/nieta-zjj/gemini_caption.git
 ```
 
-## 使用方法
+## 命令行使用
 
-### 命令行工具
-
-安装后可以直接使用命令行工具进行批量处理：
+### 基本用法
 
 ```bash
-# 使用key参数（推荐，更高效）
-gemini_caption --key 0 --max-concurrency 5 --api-key YOUR_API_KEY --mongodb-uri "mongodb://user:password@host:port/"
-
-# 或使用ID范围
-gemini_caption --start-id 1 --end-id 10 --max-concurrency 5 --api-key YOUR_API_KEY --mongodb-uri "mongodb://user:password@host:port/"
+# 需要先设置环境变量GOOGLE_APPLICATION_CREDENTIALS或GOOGLE_APPLICATION_CREDENTIALS_CONTENT
+gemini_caption --key 5 --max_concurrency 10 --mongodb_uri $mongodb_uri
 ```
 
-### 参数说明
+### 完整参数选项
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| --key | ID区间键值 (id范围为key*100000到(key+1)*100000-1) | - |
-| --start-id | 起始ID | - |
-| --end-id | 结束ID | - |
-| --max-concurrency | 最大并行处理数量 | 5 |
-| --api-key | Gemini API密钥 | 环境变量 |
-| --model-id | 使用的模型ID | gemini-2.0-flash-lite-001 |
-| --language | 输出语言 (en或zh) | zh |
-| --mongodb-uri | MongoDB连接URI | 环境变量 |
-| --output-dir | 输出目录 | 不保存文件 |
-| --save-image | 是否保存下载的图片 | False |
+```bash
+# 环境变量可选设置
+# Google API凭证（至少有一个）
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json  # Google凭证文件路径
+GOOGLE_APPLICATION_CREDENTIALS_CONTENT="..."              # Google凭证JSON内容
 
-## 编程方式使用
+# 数据库配置
+MONGODB_URI=mongodb://localhost:27017/                    # MongoDB连接URI
 
-```python
-import asyncio
-from gemini_caption import run_batch_with_args
+# 处理控制
+KEY=0                                                     # 处理特定键对应的图片批次
+MAX_CONCURRENCY=100                                       # 最大并发处理数量
 
-# 方法1: 使用key参数（推荐，性能更好）
-asyncio.run(run_batch_with_args(
-    key=0,  # 处理ID范围0-99999
-    max_concurrency=5,
-    api_key="YOUR_API_KEY",
-    mongodb_uri="mongodb://user:password@host:port/"
-))
+# 模型配置
+MODEL_ID=gemini-2.0-flash-lite-001                        # Gemini模型ID
+LANGUAGE=zh                                               # 描述生成的语言，支持"en"或"zh"
 
-# 方法2: 使用ID范围
-asyncio.run(run_batch_with_args(
-    start_id=1,
-    end_id=10,
-    max_concurrency=5,
-    api_key="YOUR_API_KEY",
-    mongodb_uri="mongodb://user:password@host:port/"
-))
+# HuggingFace设置
+HF_REPO=picollect/danbooru                                # HuggingFace仓库名称
+USE_HFPICS_FIRST=0                                        # 是否优先使用HfPics获取图片(0:否, 1:是)
+
+# 日志设置
+LOG_LEVEL=info                                            # 日志级别(debug/info/warning/error)
+LOG_FILE=                                                 # 日志文件路径，默认为None表示不输出到文件
 ```
 
-## 性能优化
+```bash
+# 命令行参数(优先级高于环境变量)
+gemini_caption [选项]
 
-本工具采用多项性能优化措施:
+选项:
+  --key INT                 处理特定键对应的图片批次
+  --start_id INT            处理起始ID
+  --end_id INT              处理结束ID
+  --max_concurrency INT     最大并发处理数量
+  --model_id TEXT           Gemini模型ID
+  --language TEXT           描述生成的语言，支持"en"或"zh"
+  --mongodb_uri TEXT        MongoDB连接URI
+  --output_dir TEXT         结果输出目录
+  --save_image              保存图像到本地
+  --hf_repo TEXT           HuggingFace仓库名称
+  --hf_cache_dir TEXT       HuggingFace缓存目录
+  --use_hfpics_first        优先使用HfPics获取图片
+  --log_level TEXT          日志级别(debug/info/warning/error)
+  --log_file TEXT           日志文件路径
+  --project_id TEXT         Google Cloud项目ID
+```
 
-1. **批量URL预处理**: 一次性获取整个key区间的URL信息，避免重复查询
-2. **已处理ID过滤**: 在批处理开始前就过滤掉已处理的ID
-3. **无效URL过滤**: 自动跳过无法获取URL的ID
-4. **异步并行处理**: 使用Python异步特性进行并行处理
-5. **自定义并发控制**: 可调整并发数量以适应不同环境
+## 模块功能说明
 
-## 环境变量
+### 主要模块
 
-可以设置以下环境变量避免每次指定参数：
+1. **gemini_batch_caption.py**
+   - 提供命令行界面和高级接口，用于批量处理图像描述任务
+   - 核心类：`GeminiBatchCaption`
+   - 主要方法：`process_batch`, `process_single_id`, `process_batch_by_key`
 
-- `GOOGLE_API_KEY`: Gemini API密钥
-- `MONGODB_URI`: MongoDB连接URI
+2. **utils/batch_processor.py**
+   - 批处理核心逻辑
+   - 处理单个或多个图片ID的描述生成任务
+   - 支持并发处理和结果收集
 
-## 许可证
+3. **utils/image_processor.py**
+   - 图像下载和处理
+   - 支持从URL或HuggingFace获取图像
+   - 提供图像保存功能
 
-MIT
+4. **utils/gemini_api_client.py**
+   - 与Google Gemini API交互
+   - 处理API请求，包含重试和错误处理逻辑
+   - 解析API响应结果
+
+5. **utils/caption_promt_utils.py**
+   - 构建AI图像描述提示文本
+   - 支持自定义提示生成，包括艺术家、角色、标签信息
+
+### 数据处理模块
+
+1. **mongo_collections/**
+   - **danbooru_gemini_captions.py**: 管理描述结果存储和检索
+   - **danbooru_pics.py**: 提供图片数据访问接口
+   - **danbooru_tags.py**: 标签结构和关系处理
+   - **danbooru_pics_model.py**: 图片数据模型定义
+
+2. **utils/character_analyzer.py**
+   - 角色分析和可视化
+   - 创建角色关系树
+   - 提供角色信息验证
+
+3. **utils/file_utils.py**
+   - 图像文件路径处理
+   - 从文件名提取ID功能
+
+4. **utils/logger_utils.py**
+   - 日志记录工具
+   - 支持多种日志级别和输出方式

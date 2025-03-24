@@ -5,7 +5,7 @@ Gemini Caption 模块
 """
 
 # 版本信息
-__version__ = "0.2.1"
+__version__ = "0.2.0"
 
 # 导出主要类和函数
 from gemini_caption.gemini_batch_caption import GeminiBatchCaption, run_batch_with_args
