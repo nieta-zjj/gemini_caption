@@ -37,6 +37,6 @@ test_*.py
 /src/scrapy/
 /src/input_db/
 /src/output/
-
+/src/query/
 # 其他
 .DS_Store

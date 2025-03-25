@@ -212,23 +212,31 @@ class BatchProcessor:
             url, status = await self.danbooru_pics.get_url_by_id(dan_id)
             if status != 200:
                 log_warning(f"无法获取ID {dan_id} 的URL，状态码: {status}")
-                return {
+                error_result = {
+                    "_id": dan_id,
                     "success": False,
                     "error": f"无法获取URL，状态码: {status}",
                     "processing_time": time.time() - start_time,
                     "status_code": status
                 }
+                # 保存到数据库
+                await self.danbooru_gemini_captions.save_caption_result(dan_id, error_result)
+                return error_result
 
         # 在获取URL后，添加对gif的检查
         if url and (url.lower().endswith('.gif') or '.gif' in url.lower()):
             log_warning(f"ID {dan_id} 是GIF文件，跳过处理")
-            return {
+            error_result = {
+                "_id": dan_id,
                 "success": False,
                 "error": "GIF文件不处理",
                 "image_url": url,
                 "processing_time": time.time() - start_time,
                 "status_code": 405
             }
+            # 保存到数据库
+            await self.danbooru_gemini_captions.save_caption_result(dan_id, error_result)
+            return error_result
 
         # 处理图片
         image_result = await self.image_processor.process_image_by_id(dan_id, custom_url=url)
@@ -410,12 +418,40 @@ class BatchProcessor:
             "total": total_ids,
             "success": 0,
             "failed": 0,
-            "skipped": skipped_processed + skipped_no_url,
+            "skipped": skipped_processed,
             "start_time": time.time(),
             "end_time": 0
         }
 
         log_debug(f"总ID数: {total_ids}, 已处理: {skipped_processed}, 无URL: {skipped_no_url}, 待处理: {len(ids_to_process)}")
+
+        # 为无URL的ID也创建记录并保存到数据库
+        no_url_tasks = []
+        for batch_start in range(start_id, end_id, batch_size):
+            batch_end = min(batch_start + batch_size, end_id)
+            for id_value in range(batch_start, batch_end):
+                # 跳过已处理的ID和已加入处理队列的ID
+                if id_value in processed_ids or id_value in ids_to_process:
+                    continue
+
+                # 检查是否是无URL情况
+                if id_value in url_batch_result:
+                    data = url_batch_result[id_value]
+                    if data.get("status") != 200 or not data.get("url"):
+                        # 创建记录并保存
+                        error_result = {
+                            "_id": id_value,
+                            "success": False,
+                            "error": f"无法获取URL，状态码: {data.get('status', 404)}",
+                            "processing_time": 0,
+                            "status_code": data.get("status", 404)
+                        }
+                        no_url_tasks.append(self.danbooru_gemini_captions.save_caption_result(id_value, error_result))
+
+        # 执行保存操作
+        if no_url_tasks:
+            log_info(f"为{len(no_url_tasks)}个无URL的ID创建记录")
+            await asyncio.gather(*no_url_tasks)
 
         # 如果没有需要处理的ID，直接返回
         if not ids_to_process:
@@ -456,8 +492,12 @@ class BatchProcessor:
         self.stats["total_time"] = self.stats["end_time"] - self.stats["start_time"]
         self.stats["avg_time_per_item"] = self.stats["total_time"] / len(ids_to_process) if ids_to_process else 0
 
+        # 添加无URL的ID到失败统计中
+        self.stats["failed"] += len(no_url_tasks)
+
         log_info(f"ID范围处理完成。总计: {self.stats['total']}，成功: {self.stats['success']}，"
-                f"失败: {self.stats['failed']}，跳过: {self.stats['skipped']}，"
+                f"失败: {self.stats['failed']}，跳过(已处理): {self.stats['skipped']}，"
+                f"无URL已记录: {len(no_url_tasks)}，"
                 f"总耗时: {self.stats['total_time']:.2f}秒")
 
         return self.stats
@@ -516,12 +556,38 @@ class BatchProcessor:
             "total": total_ids,
             "success": 0,
             "failed": 0,
-            "skipped": skipped_processed + skipped_no_url,
+            "skipped": skipped_processed,
             "start_time": time.time(),
             "end_time": 0
         }
 
         log_info(f"总ID数: {total_ids}, 已处理: {skipped_processed}, 无URL: {skipped_no_url}, 待处理: {len(ids_to_process)}")
+
+        # 为无URL的ID也创建记录并保存到数据库
+        no_url_tasks = []
+        for id_value in range(range_start, range_end):
+            # 跳过已处理的ID和已加入处理队列的ID
+            if id_value in processed_ids or id_value in ids_to_process:
+                continue
+
+            # 检查是否是无URL情况
+            if id_value in url_batch_result:
+                data = url_batch_result[id_value]
+                if data.get("status") != 200 or not data.get("url"):
+                    # 创建记录并保存
+                    error_result = {
+                        "_id": id_value,
+                        "success": False,
+                        "error": f"无法获取URL，状态码: {data.get('status', 404)}",
+                        "processing_time": 0,
+                        "status_code": data.get("status", 404)
+                    }
+                    no_url_tasks.append(self.danbooru_gemini_captions.save_caption_result(id_value, error_result))
+
+        # 执行保存操作
+        if no_url_tasks:
+            log_info(f"为{len(no_url_tasks)}个无URL的ID创建记录")
+            await asyncio.gather(*no_url_tasks)
 
         # 如果没有需要处理的ID，直接返回
         if not ids_to_process:
@@ -562,8 +628,12 @@ class BatchProcessor:
         self.stats["total_time"] = self.stats["end_time"] - self.stats["start_time"]
         self.stats["avg_time_per_item"] = self.stats["total_time"] / len(ids_to_process) if ids_to_process else 0
 
+        # 添加无URL的ID到失败统计中
+        self.stats["failed"] += len(no_url_tasks)
+
         log_info(f"ID范围处理完成。总计: {self.stats['total']}，成功: {self.stats['success']}，"
-                f"失败: {self.stats['failed']}，跳过: {self.stats['skipped']}，"
+                f"失败: {self.stats['failed']}，跳过(已处理): {self.stats['skipped']}，"
+                f"无URL已记录: {len(no_url_tasks)}，"
                 f"总耗时: {self.stats['total_time']:.2f}秒")
 
         return self.stats
@@ -618,12 +688,38 @@ class BatchProcessor:
             "total": total_ids,
             "success": 0,
             "failed": 0,
-            "skipped": skipped_processed + skipped_no_url,
+            "skipped": skipped_processed,
             "start_time": time.time(),
             "end_time": 0
         }
 
         log_info(f"总ID数: {total_ids}, 已处理: {skipped_processed}, 无URL: {skipped_no_url}, 待处理: {len(ids_to_process)}")
+
+        # 为无URL的ID也创建记录并保存到数据库
+        no_url_tasks = []
+        for id_value in range(start_id, end_id):
+            # 跳过已处理的ID和已加入处理队列的ID
+            if id_value in processed_ids or id_value in ids_to_process:
+                continue
+
+            # 检查是否是无URL情况
+            if id_value in url_batch_result:
+                data = url_batch_result[id_value]
+                if data.get("status") != 200 or not data.get("url"):
+                    # 创建记录并保存
+                    error_result = {
+                        "_id": id_value,
+                        "success": False,
+                        "error": f"无法获取URL，状态码: {data.get('status', 404)}",
+                        "processing_time": 0,
+                        "status_code": data.get("status", 404)
+                    }
+                    no_url_tasks.append(self.danbooru_gemini_captions.save_caption_result(id_value, error_result))
+
+        # 执行保存操作
+        if no_url_tasks:
+            log_info(f"为{len(no_url_tasks)}个无URL的ID创建记录")
+            await asyncio.gather(*no_url_tasks)
 
         # 如果没有需要处理的ID，直接返回
         if not ids_to_process:
@@ -664,8 +760,12 @@ class BatchProcessor:
         self.stats["total_time"] = self.stats["end_time"] - self.stats["start_time"]
         self.stats["avg_time_per_item"] = self.stats["total_time"] / len(ids_to_process) if ids_to_process else 0
 
+        # 添加无URL的ID到失败统计中
+        self.stats["failed"] += len(no_url_tasks)
+
         log_info(f"ID范围处理完成。总计: {self.stats['total']}，成功: {self.stats['success']}，"
-                f"失败: {self.stats['failed']}，跳过: {self.stats['skipped']}，"
+                f"失败: {self.stats['failed']}，跳过(已处理): {self.stats['skipped']}，"
+                f"无URL已记录: {len(no_url_tasks)}，"
                 f"总耗时: {self.stats['total_time']:.2f}秒")
 
         return self.stats
@@ -740,10 +840,36 @@ class BatchProcessor:
             "total": len(id_list),
             "success": 0,
             "failed": 0,
-            "skipped": skipped_processed + skipped_no_url,
+            "skipped": skipped_processed,
             "start_time": time.time(),
             "end_time": 0
         }
+
+        # 为无URL的ID也创建记录并保存到数据库
+        no_url_tasks = []
+        for id_value in int_id_list:
+            # 跳过已处理的ID和已加入处理队列的ID
+            if id_value in processed_ids or id_value in ids_to_process:
+                continue
+
+            # 检查是否是无URL情况
+            if id_value in url_batch_result:
+                data = url_batch_result[id_value]
+                if data.get("status") != 200 or not data.get("url"):
+                    # 创建记录并保存
+                    error_result = {
+                        "_id": id_value,
+                        "success": False,
+                        "error": f"无法获取URL，状态码: {data.get('status', 404)}",
+                        "processing_time": 0,
+                        "status_code": data.get("status", 404)
+                    }
+                    no_url_tasks.append(self.danbooru_gemini_captions.save_caption_result(id_value, error_result))
+
+        # 执行保存操作
+        if no_url_tasks:
+            log_info(f"为{len(no_url_tasks)}个无URL的ID创建记录")
+            await asyncio.gather(*no_url_tasks)
 
         # 如果没有需要处理的ID，直接返回
         if not ids_to_process:
@@ -785,8 +911,12 @@ class BatchProcessor:
         self.stats["total_time"] = self.stats["end_time"] - self.stats["start_time"]
         self.stats["avg_time_per_item"] = self.stats["total_time"] / len(ids_to_process) if ids_to_process else 0
 
+        # 添加无URL的ID到失败统计中
+        self.stats["failed"] += len(no_url_tasks)
+
         log_info(f"ID列表处理完成。总计: {self.stats['total']}，成功: {self.stats['success']}，"
-                f"失败: {self.stats['failed']}，跳过: {self.stats['skipped']}，"
+                f"失败: {self.stats['failed']}，跳过(已处理): {self.stats['skipped']}，"
+                f"无URL已记录: {len(no_url_tasks)}，"
                 f"总耗时: {self.stats['total_time']:.2f}秒")
 
         return self.stats
